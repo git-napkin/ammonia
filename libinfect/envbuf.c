@@ -1,17 +1,17 @@
 #include "envbuf.h"
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 int envbuf_len(const char *envp[]) {
     if (envp == NULL)
-        return 1;
+        return 0;
 
     int k = 0;
-    const char *env = envp[k++];
-    while (env != NULL) {
-        env = envp[k++];
+    while (envp[k] != NULL) {
+        k++;
     }
-    return k;
+    return k + 1;
 }
 
 char **envbuf_mutcopy(const char *envp[]) {
@@ -75,26 +75,26 @@ void envbuf_setenv(char **envpp[], const char *name, const char *value) {
     if (envpp) {
         char **envp = *envpp;
         if (!envp) {
-            // treat NULL as [NULL]
             envp = malloc(sizeof(const char *));
+            if (!envp) return;
             envp[0] = NULL;
+            *envpp = envp;
         }
 
         char *envToSet = malloc(strlen(name) + strlen(value) + 2);
-        strcpy(envToSet, name);
-        strcat(envToSet, "=");
-        strcat(envToSet, value);
+        if (!envToSet) return;
+        sprintf(envToSet, "%s=%s", name, value);
 
         int existingEnvIndex = envbuf_find((const char **)envp, name);
         if (existingEnvIndex >= 0) {
-            // if already exists: deallocate old variable, then replace pointer
             free(envp[existingEnvIndex]);
             envp[existingEnvIndex] = envToSet;
         } else {
-            // if doesn't exist yet: increase env buffer size, place at end
             int prevLen = envbuf_len((const char **)envp);
-            *envpp = realloc(envp, (prevLen + 1) * sizeof(const char *));
-            envp = *envpp;
+            char **tmp = realloc(envp, (prevLen + 1) * sizeof(const char *));
+            if (!tmp) { free(envToSet); return; }
+            *envpp = tmp;
+            envp = tmp;
             envp[prevLen - 1] = envToSet;
             envp[prevLen] = NULL;
         }
@@ -114,7 +114,8 @@ void envbuf_unsetenv(char **envpp[], const char *name) {
             for (int i = existingEnvIndex; i < (prevLen - 1); i++) {
                 envp[i] = envp[i + 1];
             }
-            *envpp = realloc(envp, (prevLen - 1) * sizeof(const char *));
+            char **tmp = realloc(envp, (prevLen - 1) * sizeof(const char *));
+            if (tmp) *envpp = tmp;
         }
     }
 }

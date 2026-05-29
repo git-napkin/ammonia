@@ -3,6 +3,8 @@
 #include <mach/mach_vm.h>
 #include <dlfcn.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 
 #ifdef __arm64e__

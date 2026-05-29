@@ -143,13 +143,14 @@ int SpawnNew(pid_t *pid, const char *path, const posix_spawn_file_actions_t *ac,
              const posix_spawnattr_t *ab, char *const __argv[],
              char *const __envp[]) {
   char **playground = envbuf_mutcopy((const char **)__envp);
+  int k;
 
   uint64_t darwin_rolep = 0;
   posix_spawnattr_get_darwin_role_np(ab, &darwin_rolep);
 
   if (strcmp(path, "/System/Library/CoreServices/loginwindow.app/Contents/"
                    "MacOS/loginwindow") == 0) {
-    goto SkipGuiCheck;
+    goto InjectOpener;
   }
   if (strcmp(path, "/usr/libexec/xpcproxy") == 0) {
     envbuf_setenv(&playground, "DYLD_INSERT_LIBRARIES",
@@ -159,35 +160,34 @@ int SpawnNew(pid_t *pid, const char *path, const posix_spawn_file_actions_t *ac,
         darwin_rolep == PRIO_DARWIN_ROLE_UI ||
         darwin_rolep == PRIO_DARWIN_ROLE_UI_NON_FOCAL) {
 
-      if (!is_path_blacklisted(path)) {
-
-      SkipGuiCheck:
-        // skip adding opener for this path
+      if (is_path_blacklisted(path)) {
         LogToFile("ammonia: skipping opener for blacklisted path '%s'\n", path);
-        // we are GUI
-
-        char *newlib = SupportFolderP "libopener.dylib";
-
-        int idx =
-            envbuf_find((const char **)playground, "DYLD_INSERT_LIBRARIES");
-        if (idx >= 0) {
-          const char *old = playground[idx] + strlen("DYLD_INSERT_LIBRARIES=");
-          char *combined = NULL;
-          if (asprintf(&combined, "%s:%s", old, newlib) != -1) {
-            envbuf_setenv(&playground, "DYLD_INSERT_LIBRARIES", combined);
-            free(combined);
-          }
-        } else {
-          envbuf_setenv(&playground, "DYLD_INSERT_LIBRARIES", newlib);
-        }
+        goto Spawn;
       }
 
-      int k = SpawnOld(pid, path, ac, ab, __argv, (char *const *)playground);
-      return k;
+    InjectOpener:
+      LogToFile("ammonia: injecting opener into '%s'\n", path);
+
+      char *newlib = SupportFolderP "libopener.dylib";
+
+      int idx =
+          envbuf_find((const char **)playground, "DYLD_INSERT_LIBRARIES");
+      if (idx >= 0) {
+        const char *old = playground[idx] + strlen("DYLD_INSERT_LIBRARIES=");
+        char *combined = NULL;
+        if (asprintf(&combined, "%s:%s", old, newlib) != -1) {
+          envbuf_setenv(&playground, "DYLD_INSERT_LIBRARIES", combined);
+          free(combined);
+        }
+      } else {
+        envbuf_setenv(&playground, "DYLD_INSERT_LIBRARIES", newlib);
+      }
     }
   }
 
-  int k = SpawnOld(pid, path, ac, ab, __argv, (char *const *)playground);
+Spawn:
+  k = SpawnOld(pid, path, ac, ab, __argv, (char *const *)playground);
+  envbuf_free(playground);
   return k;
 }
 

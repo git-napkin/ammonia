@@ -1,32 +1,36 @@
 #!/bin/bash
 
-FRIDA_VERSION=16.2.1
+set -e
 
-mkdir -p temp
-cd temp
+FRIDA_VERSION=16.2.1
+PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+WORKDIR="$(mktemp -d)"
+trap 'rm -rf "$WORKDIR"' EXIT
+cd "$WORKDIR"
 
 # Download and extract x86_64 frida-gum library
-if test -f "frida-gum-x86_64.xz"; then
-    echo frida-gum-x86_64.xz already exists, skipping...
+if [ -f "frida-gum-x86_64.xz" ]; then
+    echo "frida-gum-x86_64.xz already exists, skipping..."
 else
-    echo Downloading frida-gum-x86_64.xz...
-    curl -L --output frida-gum-x86_64.xz https://github.com/frida/frida/releases/download/$FRIDA_VERSION/frida-gum-devkit-$FRIDA_VERSION-macos-x86_64.tar.xz
+    echo "Downloading frida-gum-x86_64.xz..."
+    curl -fL --output frida-gum-x86_64.xz "https://github.com/frida/frida/releases/download/$FRIDA_VERSION/frida-gum-devkit-$FRIDA_VERSION-macos-x86_64.tar.xz"
 fi
 
 # Download and extract arm64e frida-gum library
-if test -f "frida-gum-arm64e.xz"; then
-    echo frida-gum-arm64e.xz already exists, skipping...
+if [ -f "frida-gum-arm64e.xz" ]; then
+    echo "frida-gum-arm64e.xz already exists, skipping..."
 else
-    echo Downloading frida-gum-arm64e.xz...
-    curl -L --output frida-gum-arm64e.xz https://github.com/frida/frida/releases/download/$FRIDA_VERSION/frida-gum-devkit-$FRIDA_VERSION-macos-arm64e.tar.xz
+    echo "Downloading frida-gum-arm64e.xz..."
+    curl -fL --output frida-gum-arm64e.xz "https://github.com/frida/frida/releases/download/$FRIDA_VERSION/frida-gum-devkit-$FRIDA_VERSION-macos-arm64e.tar.xz"
 fi
 
 # Download and extract arm64 frida-gum library
-if test -f "frida-gum-arm64.xz"; then
-    echo frida-gum-arm64.xz already exists, skipping...
+if [ -f "frida-gum-arm64.xz" ]; then
+    echo "frida-gum-arm64.xz already exists, skipping..."
 else
-    echo Downloading frida-gum-arm64.xz...
-    curl -L --output frida-gum-arm64.xz https://github.com/frida/frida/releases/download/$FRIDA_VERSION/frida-gum-devkit-$FRIDA_VERSION-macos-arm64.tar.xz
+    echo "Downloading frida-gum-arm64.xz..."
+    curl -fL --output frida-gum-arm64.xz "https://github.com/frida/frida/releases/download/$FRIDA_VERSION/frida-gum-devkit-$FRIDA_VERSION-macos-arm64.tar.xz"
 fi
 
 # Extract x86_64 libfrida-gum.a
@@ -56,24 +60,13 @@ if ! test -f "libfrida-gum-x86_64-arm64e-arm64.a"; then
     exit 1
 fi
 
-echo "Cleaning up..."
+echo "Building fat library and shared dylib..."
 
-# Remove downloaded archives and temporary files
-rm frida-gum-arm64e.xz
-rm frida-gum-arm64.xz
-rm frida-gum-x86_64.xz
-rm libfrida-gum-arm64e.a
-rm libfrida-gum-arm64.a
-rm libfrida-gum-x86_64.a
-
-# Copy the FAT libraries to the desired location
-cp libfrida-gum-x86_64-arm64e-arm64.a ..
+# Copy the FAT libraries to the output directory
+cp libfrida-gum-x86_64-arm64e-arm64.a "$PROJECT_DIR"
 
 clang -arch x86_64 -arch arm64e -arch arm64 -lresolv -fpic -shared -Wl,-all_load libfrida-gum-x86_64-arm64e-arm64.a -o fridagum.dylib
 
+cp fridagum.dylib "$PROJECT_DIR"
 
-cp ./fridagum.dylib ..
-
-# Navigate back to the previous directory and remove the temporary directory
-cd ..
-rm -rf temp
+echo "Done. Built: libfrida-gum-x86_64-arm64e-arm64.a, fridagum.dylib"

@@ -37,7 +37,6 @@ target_link_libraries(ammonia
 add_library(libinfect SHARED
     libinfect/libinfect.m
     libinfect/envbuf.c
-    libinfect/frida-gum.h
 )
 
 target_link_libraries(libinfect
@@ -62,8 +61,6 @@ file(GLOB OPENER_SOURCES opener/*.m opener/*.h)
 add_library(opener SHARED ${OPENER_SOURCES})
 target_link_libraries(opener
     ${FD_FRAMEWORK}
-    ${CMAKE_CURRENT_SOURCE_DIR}/libfrida-gum-x86_64-arm64e-arm64.a
-    "-framework Security"
 )
 target_include_directories(opener PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}

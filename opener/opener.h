@@ -8,17 +8,13 @@
 #ifndef opener_h
 #define opener_h
 
-#include <stdio.h>
-#include <pthread.h>
 #include <dirent.h>
-#include <syslog.h>
-#include <stdio.h>
-#include <stdbool.h>
-#include <unistd.h>
-#include <spawn.h>
 #include <dlfcn.h>
-#include <libproc.h>
-#include <pwd.h>
+#include <stdbool.h>
+#include <stdio.h>
+#include <sys/syslimits.h>
+#include <syslog.h>
+#include <unistd.h>
 
 #import "ammonia.h"
 

@@ -6,18 +6,12 @@
 //
 #include <Foundation/Foundation.h>
 #include "opener.h"
-#include <mach/task_policy.h>
 #include <string.h>
 #include <stdlib.h>
-#include <mach/mach.h>
-#include <libproc.h>
 
-const char *GetExePath(void) {
-    uint32_t bufsize = 0;
-    _NSGetExecutablePath(NULL, &bufsize);
-    char *executablePath = malloc(bufsize);
-    _NSGetExecutablePath(&executablePath[0], &bufsize);
-    return executablePath;
+static char *GetExePath(char *buf, uint32_t bufsize) {
+    _NSGetExecutablePath(buf, &bufsize);
+    return buf;
 }
 
 void Open(void * interceptor) { 
@@ -37,7 +31,8 @@ void Open(void * interceptor) {
                 char blacklist_file[PATH_MAX];
                 snprintf(blacklist_file, sizeof(blacklist_file), "%stweaks/%s.blacklist", SupportFolderP, en->d_name);
 
-                const char *exe_path = GetExePath();
+                char exe_path[PATH_MAX];
+                GetExePath(exe_path, sizeof(exe_path));
                 bool should_load = false;
 
                 // Priority 1: whitelist
@@ -111,50 +106,22 @@ void Open(void * interceptor) {
     closelog();
 }
 
-int IsForegroundProcess()
-{
-    task_t currentTask = mach_task_self();
-    task_category_policy_data_t category_policy;
-    mach_msg_type_number_t task_info_count = TASK_CATEGORY_POLICY_COUNT;
-    boolean_t get_default = FALSE;
-    kern_return_t result = task_policy_get(currentTask, TASK_CATEGORY_POLICY, (task_policy_t)&category_policy, &task_info_count, &get_default);
-    
-    if (result != KERN_SUCCESS)
-    {
-        fprintf(stderr, "Error getting task category policy: %s\n", mach_error_string(result));
-        return -1; // or handle the error appropriately
-    }
-
-    return !(category_policy.role & TASK_BACKGROUND_APPLICATION) ||
-           !(category_policy.role & TASK_FOREGROUND_APPLICATION) ||
-    //       !(category_policy.role & TASK_UNSPECIFIED) || // a gamble
-           !(category_policy.role & TASK_DEFAULT_APPLICATION);
-}
-
-static bool gum_loaded = false;
-
 typedef void (*GumInitEmbeddedFunc_t)(void);
 typedef void *(*GumInterceptorObtainFunc_t)(void);
-typedef void (*GumInterceptorBeginTransactionFunc_t)(void *interceptor);
-typedef void (*GumInterceptorEndTransactionFunc_t)(void *interceptor);
-typedef bool (*GumInterceptorReplaceFunc_t)(void *interceptor,
-                                            void *target,
-                                            void *replacement,
-                                            void *user_data,
-                                            void **out_original);
-typedef bool (*GumInterceptorRevertFunc_t)(void *interceptor,
-                                           void *target);
-
 
 void __attribute__((constructor)) ctor_main(void) {
-    // Make frida interceptor availible to tweaks
     void *hooking = dlopen("/private/var/ammonia/core/fridagum.dylib", RTLD_NOW | RTLD_GLOBAL);
+    if (!hooking) {
+        syslog(LOG_ERR, "ammonia: failed to load fridagum.dylib: %s", dlerror());
+        return;
+    }
     GumInitEmbeddedFunc_t GumInitEmbeddedFunc = dlsym(hooking, "gum_init_embedded");
     GumInterceptorObtainFunc_t GumInterceptorObtainFunc = dlsym(hooking, "gum_interceptor_obtain");
-    if (!gum_loaded) {
-        GumInitEmbeddedFunc();
-        gum_loaded = true;
+    if (!GumInitEmbeddedFunc || !GumInterceptorObtainFunc) {
+        syslog(LOG_ERR, "ammonia: failed to resolve Frida-Gum symbols");
+        dlclose(hooking);
+        return;
     }
-
+    GumInitEmbeddedFunc();
     Open(GumInterceptorObtainFunc());
 }

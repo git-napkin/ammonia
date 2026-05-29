@@ -17,12 +17,14 @@ fi
 mkdir $ammoniabuildfolder/scripts
 
 # Create a postinstall script to set up the LaunchDaemon
-cat <<EOL > "$ammoniabuildfolder/scripts/postinstall"
+cat <<'EOL' > "$ammoniabuildfolder/scripts/postinstall"
 #!/bin/sh
 
-echo "<?xml version=\\"1.0\\" encoding=\\"UTF-8\\"?>
-<!DOCTYPE plist PUBLIC \\"-//Apple//DTD PLIST 1.0//EN\\" \\"http://www.apple.com/DTDs/PropertyList-1.0.dtd\\">
-<plist version=\\"1.0\\">
+# Write the LaunchDaemon plist
+cat > /Library/LaunchDaemons/com.bedtime.ammonia.plist <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
 <dict>
     <key>Label</key>
     <string>com.bedtime.ammonia</string>
@@ -35,11 +37,23 @@ echo "<?xml version=\\"1.0\\" encoding=\\"UTF-8\\"?>
     <key>KeepAlive</key>
     <false/>
 </dict>
-</plist>" > /Library/LaunchDaemons/com.bedtime.ammonia.plist
+</plist>
+PLIST
+chmod 644 /Library/LaunchDaemons/com.bedtime.ammonia.plist
 
-launchctl load /Library/LaunchDaemons/com.bedtime.ammonia.plist
-nvram boot-args="-arm64e_preview_abi $(nvram boot-args 2>/dev/null | cut -f 2-)"
+# Unload any existing registration, then load the updated plist for next boot
+launchctl unload /Library/LaunchDaemons/com.bedtime.ammonia.plist 2>/dev/null || true
+launchctl load /Library/LaunchDaemons/com.bedtime.ammonia.plist 2>/dev/null || launchctl bootstrap system /Library/LaunchDaemons/com.bedtime.ammonia.plist 2>/dev/null || true
+
+# One-time system configuration (idempotent)
+CURRENT_BOOT_ARGS="$(nvram boot-args 2>/dev/null | cut -f 2-)"
+echo "$CURRENT_BOOT_ARGS" | grep -q -- "-arm64e_preview_abi" || nvram boot-args="-arm64e_preview_abi $CURRENT_BOOT_ARGS"
 defaults write /Library/Preferences/com.apple.security.libraryvalidation.plist DisableLibraryValidation -bool true
+
+echo ""
+echo "== Ammonia installed =="
+echo "A reboot is required for the update to take full effect."
+echo ""
 
 exit 0
 EOL
