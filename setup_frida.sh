@@ -33,15 +33,16 @@ else
     curl -fL --output frida-gum-arm64.xz "https://github.com/frida/frida/releases/download/$FRIDA_VERSION/frida-gum-devkit-$FRIDA_VERSION-macos-arm64.tar.xz"
 fi
 
-# Extract x86_64 libfrida-gum.a
-tar xf frida-gum-x86_64.xz libfrida-gum.a
+# Extract x86_64 libfrida-gum.a and header
+tar xf frida-gum-x86_64.xz libfrida-gum.a frida-gum.h
 mv libfrida-gum.a libfrida-gum-x86_64.a
+cp frida-gum.h "$PROJECT_DIR/libinfect/frida-gum.h"
 
-# Extract arm64e libfrida-gum.a
+# Extract arm64e libfrida-gum.a (header already copied above)
 tar xf frida-gum-arm64e.xz libfrida-gum.a
 mv libfrida-gum.a libfrida-gum-arm64e.a
 
-# Extract arm64 libfrida-gum.a
+# Extract arm64 libfrida-gum.a (header already copied above)
 tar xf frida-gum-arm64.xz libfrida-gum.a
 mv libfrida-gum.a libfrida-gum-arm64.a
 

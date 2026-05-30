@@ -219,11 +219,11 @@ void __attribute__((constructor)) Infect(void) {
   gum_interceptor_begin_transaction(interceptor);
   gum_interceptor_replace(
       interceptor,
-      (gpointer)gum_module_find_export_by_name(NULL, "posix_spawn"),
+      (gpointer)gum_module_find_global_export_by_name("posix_spawn"),
       (gpointer)SpawnNew, NULL, (gpointer *)&SpawnOld);
   gum_interceptor_replace(
       interceptor,
-      (gpointer)gum_module_find_export_by_name(NULL, "posix_spawnp"),
+      (gpointer)gum_module_find_global_export_by_name("posix_spawnp"),
       (gpointer)SpawnPNew, NULL, (gpointer *)(NULL));
   gum_interceptor_end_transaction(interceptor);
 }
