@@ -41,6 +41,13 @@ cat > /Library/LaunchDaemons/com.bedtime.ammonia.plist <<'PLIST'
 PLIST
 chmod 644 /Library/LaunchDaemons/com.bedtime.ammonia.plist
 
+# Lock down ownership and permissions on the entire ammonia directory tree
+chown -R root:wheel /private/var/ammonia
+chmod 755 /private/var/ammonia
+chmod 755 /private/var/ammonia/core
+chmod 755 /private/var/ammonia/core/tweaks
+chmod 755 /private/var/ammonia/core/gui
+
 # Unload any existing registration, then load the updated plist for next boot
 launchctl unload /Library/LaunchDaemons/com.bedtime.ammonia.plist 2>/dev/null || true
 launchctl load /Library/LaunchDaemons/com.bedtime.ammonia.plist 2>/dev/null || launchctl bootstrap system /Library/LaunchDaemons/com.bedtime.ammonia.plist 2>/dev/null || true
@@ -71,10 +78,10 @@ cp $ammoniabuildfolder/./Build/ammonia $ammoniabuildfolder/temp/ammonia/core/
 cp $ammoniabuildfolder/./Build/liblibinfect.dylib $ammoniabuildfolder/temp/ammonia/core/
 cp $ammoniabuildfolder/./Build/libopener.dylib $ammoniabuildfolder/temp/ammonia/core/
 
-chmod 777 "$ammoniabuildfolder/temp/ammonia/core/tweaks"
+chmod 755 "$ammoniabuildfolder/temp/ammonia/core/tweaks"
 
 mkdir $ammoniabuildfolder/temp/ammonia/core/gui
-chmod 777 "$ammoniabuildfolder/temp/ammonia/core/gui"
+chmod 755 "$ammoniabuildfolder/temp/ammonia/core/gui"
 
 # Build the package
 sudo pkgbuild --install-location /private/var/ --root $ammoniabuildfolder/temp --scripts ./scripts --identifier net.bedtime.ammonia "$ammoniabuildfolder/ammonia.pkg"

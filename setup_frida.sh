@@ -2,7 +2,7 @@
 
 set -e
 
-FRIDA_VERSION=16.2.1
+FRIDA_VERSION=17.9.11
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 WORKDIR="$(mktemp -d)"

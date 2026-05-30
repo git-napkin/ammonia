@@ -53,7 +53,20 @@ int (*SpawnOld)(pid_t *pid, const char *path,
                 const posix_spawnattr_t *ab, char *const __argv[],
                 char *const __envp[]);
 
-bool PathDriver(const char *path) { return (strstr(path, "Driver") != NULL); }
+static bool path_ends_with(const char *path, const char *suffix) {
+    if (!path || !suffix) return false;
+    size_t plen = strlen(path);
+    size_t slen = strlen(suffix);
+    if (slen == 0 || slen > plen) return false;
+    return strncmp(path + plen - slen, suffix, slen) == 0 &&
+           (plen == slen || path[plen - slen - 1] == '/');
+}
+
+static bool path_matches_driver(const char *path) {
+    return path_ends_with(path, "Driver");
+}
+
+#define PathDriver(path) path_matches_driver(path)
 
 int posix_spawnattr_get_darwin_role_np(const posix_spawnattr_t *__restrict attr,
                                        uint64_t *__restrict darwin_rolep);
@@ -132,7 +145,7 @@ static bool is_path_blacklisted(const char *path) {
     const char *entry = ammonia_blacklist[i];
     if (!entry || entry[0] == '\0')
       continue;
-    if (strstr(path, entry) != NULL) {
+    if (path_ends_with(path, entry)) {
       return true;
     }
   }
