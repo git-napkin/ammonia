@@ -143,7 +143,6 @@ void Open(void * interceptor) {
             cleanup:
                 continue;
             }
-        }
         closedir(dr);
     } else {
         syslog(LOG_ERR, "Error opening tweaks directory.");
