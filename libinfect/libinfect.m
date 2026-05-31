@@ -26,7 +26,7 @@
 
 void LogToFile(const char *format, ...) {
   // Open the file in append mode
-  FILE *file = fopen("/tmp/infect.log", "a");
+  FILE *file = fopen(SupportFolderP "infect.log", "a");
 
   if (file == NULL) {
     // Failed to open the file
@@ -159,7 +159,9 @@ int SpawnNew(pid_t *pid, const char *path, const posix_spawn_file_actions_t *ac,
   int k;
 
   uint64_t darwin_rolep = 0;
-  posix_spawnattr_get_darwin_role_np(ab, &darwin_rolep);
+  if (ab != NULL) {
+    posix_spawnattr_get_darwin_role_np(ab, &darwin_rolep);
+  }
 
   if (strcmp(path, "/System/Library/CoreServices/loginwindow.app/Contents/"
                    "MacOS/loginwindow") == 0) {

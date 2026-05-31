@@ -14,7 +14,7 @@ if [ -z "$ammoniabuildfolder" ]; then
 fi
 
 # Create a directory for the scripts
-mkdir $ammoniabuildfolder/scripts
+mkdir "$ammoniabuildfolder/scripts"
 
 # Create a postinstall script to set up the LaunchDaemon
 cat <<'EOL' > "$ammoniabuildfolder/scripts/postinstall"
@@ -54,7 +54,14 @@ launchctl load /Library/LaunchDaemons/com.bedtime.ammonia.plist 2>/dev/null || l
 
 # One-time system configuration (idempotent)
 CURRENT_BOOT_ARGS="$(nvram boot-args 2>/dev/null | cut -f 2-)"
-echo "$CURRENT_BOOT_ARGS" | grep -q -- "-arm64e_preview_abi" || nvram boot-args="-arm64e_preview_abi $CURRENT_BOOT_ARGS"
+if [ -n "$CURRENT_BOOT_ARGS" ]; then
+    case " $CURRENT_BOOT_ARGS " in
+        *" -arm64e_preview_abi "*) ;;
+        *) nvram boot-args="-arm64e_preview_abi $CURRENT_BOOT_ARGS" ;;
+    esac
+else
+    nvram boot-args="-arm64e_preview_abi" 2>/dev/null || true
+fi
 defaults write /Library/Preferences/com.apple.security.libraryvalidation.plist DisableLibraryValidation -bool true
 
 echo ""
@@ -69,23 +76,23 @@ EOL
 chmod +x "$ammoniabuildfolder/scripts/postinstall"
 
 # Create a temporary directory and setup the installation files in it.
-mkdir $ammoniabuildfolder/temp
-mkdir $ammoniabuildfolder/temp/ammonia
-mkdir $ammoniabuildfolder/temp/ammonia/core
-mkdir $ammoniabuildfolder/temp/ammonia/core/tweaks
-cp $ammoniabuildfolder/./fridagum.dylib $ammoniabuildfolder/temp/ammonia/core/
-cp $ammoniabuildfolder/./Build/ammonia $ammoniabuildfolder/temp/ammonia/core/
-cp $ammoniabuildfolder/./Build/liblibinfect.dylib $ammoniabuildfolder/temp/ammonia/core/
-cp $ammoniabuildfolder/./Build/libopener.dylib $ammoniabuildfolder/temp/ammonia/core/
+mkdir "$ammoniabuildfolder/temp"
+mkdir "$ammoniabuildfolder/temp/ammonia"
+mkdir "$ammoniabuildfolder/temp/ammonia/core"
+mkdir "$ammoniabuildfolder/temp/ammonia/core/tweaks"
+cp "$ammoniabuildfolder/./fridagum.dylib" "$ammoniabuildfolder/temp/ammonia/core/"
+cp "$ammoniabuildfolder/./Build/ammonia" "$ammoniabuildfolder/temp/ammonia/core/"
+cp "$ammoniabuildfolder/./Build/liblibinfect.dylib" "$ammoniabuildfolder/temp/ammonia/core/"
+cp "$ammoniabuildfolder/./Build/libopener.dylib" "$ammoniabuildfolder/temp/ammonia/core/"
 
 chmod 755 "$ammoniabuildfolder/temp/ammonia/core/tweaks"
 
-mkdir $ammoniabuildfolder/temp/ammonia/core/gui
+mkdir "$ammoniabuildfolder/temp/ammonia/core/gui"
 chmod 755 "$ammoniabuildfolder/temp/ammonia/core/gui"
 
 # Build the package
-sudo pkgbuild --install-location /private/var/ --root $ammoniabuildfolder/temp --scripts ./scripts --identifier net.bedtime.ammonia "$ammoniabuildfolder/ammonia.pkg"
-rm -r $ammoniabuildfolder/scripts/
+sudo pkgbuild --install-location /private/var/ --root "$ammoniabuildfolder/temp" --scripts "$ammoniabuildfolder/scripts" --identifier net.bedtime.ammonia "$ammoniabuildfolder/ammonia.pkg"
+rm -r "$ammoniabuildfolder/scripts/"
 
 # Remove the temporary directory
-rm -r $ammoniabuildfolder/temp
+rm -r "$ammoniabuildfolder/temp"
