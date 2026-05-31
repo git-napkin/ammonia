@@ -2,7 +2,6 @@
 
 # Remove directories
 sudo rm -rf /private/var/ammonia
-sudo rm -rf /usr/local/bin/ammonia
 
 # Remove system launch daemon
 sudo launchctl bootout system/com.bedtime.ammonia 2>/dev/null || true

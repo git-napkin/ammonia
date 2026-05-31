@@ -1,12 +1,12 @@
 //
-//  rosetta.h
+//  ammonia.h
 //  ammonia
 //
 //  Created by bedtime on 11/19/23.
 //
 
-#ifndef rosetta_h
-#define rosetta_h
+#ifndef ammonia_h
+#define ammonia_h
 
 #include <stdbool.h>
 #include <stdio.h>
@@ -14,4 +14,4 @@
 
 #define SupportFolderP "/private/var/ammonia/core/"
 
-#endif /* rosetta_h */
+#endif /* ammonia_h */

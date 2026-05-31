@@ -42,11 +42,11 @@ void envbuf_free(char *envp[]) {
 
 int envbuf_find(const char *envp[], const char *name) {
     if (envp) {
-        unsigned long nameLen = strlen(name);
+        size_t nameLen = strlen(name);
         int k = 0;
         const char *env = envp[k++];
         while (env != NULL) {
-            unsigned long envLen = strlen(env);
+            size_t envLen = strlen(env);
             if (envLen > nameLen) {
                 if (!strncmp(env, name, nameLen)) {
                     if (env[nameLen] == '=') {
@@ -62,7 +62,7 @@ int envbuf_find(const char *envp[], const char *name) {
 
 const char *envbuf_getenv(const char *envp[], const char *name) {
     if (envp) {
-        unsigned long nameLen = strlen(name);
+        size_t nameLen = strlen(name);
         int envIndex = envbuf_find(envp, name);
         if (envIndex >= 0) {
             return &envp[envIndex][nameLen + 1];

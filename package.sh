@@ -1,10 +1,10 @@
 #!/bin/sh
 
-# Check if the variable $glowbuildfolder is set and not empty
+# Check if the variable $ammoniabuildfolder is set and not empty
 if [ -z "$ammoniabuildfolder" ]; then
-    # Check if libglow.dylib exists in the current directory
+    # Check if Build/ammonia exists in the current directory
     if [ -f "./Build/ammonia" ]; then
-        # Set $glowbuildfolder to the current directory
+        # Set $ammoniabuildfolder to the current directory
         ammoniabuildfolder=$(pwd)
     else
         # Ask the user to enter the build directory's path
@@ -62,7 +62,7 @@ if [ -n "$CURRENT_BOOT_ARGS" ]; then
 else
     nvram boot-args="-arm64e_preview_abi" 2>/dev/null || true
 fi
-defaults write /Library/Preferences/com.apple.security.libraryvalidation.plist DisableLibraryValidation -bool true
+defaults write /Library/Preferences/com.apple.security.libraryvalidation DisableLibraryValidation -bool true
 
 echo ""
 echo "== Ammonia installed =="
@@ -91,7 +91,7 @@ mkdir "$ammoniabuildfolder/temp/ammonia/core/gui"
 chmod 755 "$ammoniabuildfolder/temp/ammonia/core/gui"
 
 # Build the package
-sudo pkgbuild --install-location /private/var/ --root "$ammoniabuildfolder/temp" --scripts "$ammoniabuildfolder/scripts" --identifier net.bedtime.ammonia "$ammoniabuildfolder/ammonia.pkg"
+sudo pkgbuild --install-location /private/var/ --root "$ammoniabuildfolder/temp" --scripts "$ammoniabuildfolder/scripts" --identifier com.bedtime.ammonia "$ammoniabuildfolder/ammonia.pkg"
 rm -r "$ammoniabuildfolder/scripts/"
 
 # Remove the temporary directory

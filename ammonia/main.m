@@ -117,11 +117,6 @@ int main(int argc, char **argv)
     uint64_t stack_contents = 0x00000000CAFEBABE;
     pid_t pid = 1;
 
-    if (!pid) {
-        fprintf(stderr, "could not locate Dock.app pid\n");
-        return 1;
-    }
-
     if (task_for_pid(mach_task_self(), pid, &task) != KERN_SUCCESS) {
         fprintf(stderr, "could not retrieve task port for pid: %d\n", pid);
         return 1;

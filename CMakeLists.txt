@@ -57,13 +57,21 @@ target_compile_options(ammonia PRIVATE
 
 
 # Add the opener library
-file(GLOB OPENER_SOURCES opener/*.m opener/*.h)
-add_library(opener SHARED ${OPENER_SOURCES})
+add_library(opener SHARED
+    opener/opener.m
+    opener/opener.h
+)
 target_link_libraries(opener
     ${FD_FRAMEWORK}
 )
 target_include_directories(opener PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
+)
+target_compile_options(libinfect PRIVATE
+    -fobjc-arc
+)
+target_compile_options(opener PRIVATE
+    -fobjc-arc
 )
 
 # set(APP_SOURCES
