@@ -1,0 +1,29 @@
+name: Build Check
+
+on:
+  push:
+    branches: [ master, backup ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Setup Frida dependencies
+        run: sh setup_frida.sh
+
+      - name: Build project
+        run: sh compile.sh
+
+      - name: Verify artifacts
+        run: |
+          test -f Build/ammonia || { echo "Missing Build/ammonia"; exit 1; }
+          test -f Build/liblibinfect.dylib || { echo "Missing Build/liblibinfect.dylib"; exit 1; }
+          test -f Build/libopener.dylib || { echo "Missing Build/libopener.dylib"; exit 1; }
+          echo "All build artifacts verified"
