@@ -71,51 +71,54 @@ const char *envbuf_getenv(const char *envp[], const char *name) {
     return NULL;
 }
 
-void envbuf_setenv(char **envpp[], const char *name, const char *value) {
-    if (envpp) {
-        char **envp = *envpp;
-        if (!envp) {
-            envp = malloc(sizeof(const char *));
-            if (!envp) return;
-            envp[0] = NULL;
-            *envpp = envp;
-        }
+char **envbuf_setenv(char **envp, const char *name, const char *value) {
+    if (!name || !value)
+        return envp;
 
-        char *envToSet = malloc(strlen(name) + strlen(value) + 2);
-        if (!envToSet) return;
-        sprintf(envToSet, "%s=%s", name, value);
-
-        int existingEnvIndex = envbuf_find((const char **)envp, name);
-        if (existingEnvIndex >= 0) {
-            free(envp[existingEnvIndex]);
-            envp[existingEnvIndex] = envToSet;
-        } else {
-            int prevLen = envbuf_len((const char **)envp);
-            char **tmp = realloc(envp, (prevLen + 1) * sizeof(const char *));
-            if (!tmp) { free(envToSet); return; }
-            *envpp = tmp;
-            envp = tmp;
-            envp[prevLen - 1] = envToSet;
-            envp[prevLen] = NULL;
-        }
+    if (!envp) {
+        envp = malloc(sizeof(char *));
+        if (!envp)
+            return NULL;
+        envp[0] = NULL;
     }
+
+    char *envToSet = malloc(strlen(name) + strlen(value) + 2);
+    if (!envToSet)
+        return envp;
+    sprintf(envToSet, "%s=%s", name, value);
+
+    int existingEnvIndex = envbuf_find((const char **)envp, name);
+    if (existingEnvIndex >= 0) {
+        free(envp[existingEnvIndex]);
+        envp[existingEnvIndex] = envToSet;
+        return envp;
+    }
+
+    int prevLen = envbuf_len((const char **)envp);
+    char **tmp = realloc(envp, (prevLen + 1) * sizeof(char *));
+    if (!tmp) {
+        free(envToSet);
+        return envp;
+    }
+    envp = tmp;
+    envp[prevLen - 1] = envToSet;
+    envp[prevLen] = NULL;
+    return envp;
 }
 
-void envbuf_unsetenv(char **envpp[], const char *name) {
-    if (envpp) {
-        char **envp = *envpp;
-        if (!envp)
-            return;
+char **envbuf_unsetenv(char **envp, const char *name) {
+    if (!envp || !name)
+        return envp;
 
-        int existingEnvIndex = envbuf_find((const char **)envp, name);
-        if (existingEnvIndex >= 0) {
-            free(envp[existingEnvIndex]);
-            int prevLen = envbuf_len((const char **)envp);
-            for (int i = existingEnvIndex; i < (prevLen - 1); i++) {
-                envp[i] = envp[i + 1];
-            }
-            char **tmp = realloc(envp, (prevLen - 1) * sizeof(const char *));
-            if (tmp) *envpp = tmp;
-        }
+    int existingEnvIndex = envbuf_find((const char **)envp, name);
+    if (existingEnvIndex < 0)
+        return envp;
+
+    free(envp[existingEnvIndex]);
+    int prevLen = envbuf_len((const char **)envp);
+    for (int i = existingEnvIndex; i < (prevLen - 1); i++) {
+        envp[i] = envp[i + 1];
     }
+    char **tmp = realloc(envp, (prevLen - 1) * sizeof(char *));
+    return tmp ? tmp : envp;
 }

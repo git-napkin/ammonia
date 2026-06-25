@@ -73,7 +73,7 @@ Loaded via `dlopen` in launchd. Uses Frida-Gum (static library `libfrida-gum-arm
 3. Replaces `posix_spawn` with `SpawnNew` and `posix_spawnp` with `SpawnPNew` using Frida-Gum's interceptor.
 4. `SpawnNew` determines which processes to inject:
    - **`loginwindow`**: Always injects `libopener.dylib` via `DYLD_INSERT_LIBRARIES`.
-   - **`xpcproxy`**: Injects `liblibinfect.dylib` (spreads the hook to child processes).
+   - **`xpcproxy`**: Injects `liblibinfect.dylib` (spreads the hook to child processes), unless disabled via `ammonia.disable-xpcproxy`.
    - **UI processes** (darwin role `PRIO_DARWIN_ROLE_UI_FOCAL`, `PRIO_DARWIN_ROLE_UI`, or `PRIO_DARWIN_ROLE_UI_NON_FOCAL`): Injects `libopener.dylib`, unless blacklisted.
    - **Drivers** (path ends with `Driver`): Skipped entirely.
 5. Appends to existing `DYLD_INSERT_LIBRARIES` if already set; otherwise creates it.
@@ -82,7 +82,7 @@ Loaded via `dlopen` in launchd. Uses Frida-Gum (static library `libfrida-gum-arm
 #### Blacklist (`ammonia.blacklist`)
 
 - Loaded at startup from `SupportFolderP "ammonia.blacklist"`.
-- Substring-based matching against the process path using `path_ends_with`.
+- Matching against the process path using `path_matches_entry` (exact path or suffix).
 - Lines support `#` comments, leading/trailing whitespace trimming.
 - Blacklisted processes skip opener injection entirely.
 
@@ -92,9 +92,9 @@ Loaded via `DYLD_INSERT_LIBRARIES` into target processes.
 
 1. Constructor `ctor_main(void)` runs on library load.
 2. Dynamically loads `fridagum.dylib` (shared lib Frida-Gum) and resolves `gum_init_embedded` and `gum_interceptor_obtain`.
-3. Calls `Open(interceptor)`.
-4. `Open` scans `/private/var/ammonia/core/tweaks/` for regular files.
-5. For each `.dylib` file in the tweaks directory:
+3. Calls `Open(interceptor)` and registers a `SIGUSR1` handler for hot-reload.
+4. `Open` scans `/private/var/ammonia/core/tweaks/` and `/private/var/ammonia/core/gui/` for regular files.
+5. For each regular file in the tweaks or gui directory:
    - Rejects path traversal attempts (checks for `..` and `/` in filename).
    - Checks for a `.whitelist` sibling: if present, the tweak loads ONLY if the current process path matches an entry (via exact match or suffix match).
    - Checks for a `.blacklist` sibling: if present, the tweak loads UNLESS the current process path matches an entry.
@@ -114,8 +114,8 @@ Utility library for safe environment array manipulation:
 | `envbuf_free` | Frees all entries and the array |
 | `envbuf_find` | Finds index of env var by name (returns -1 if not found) |
 | `envbuf_getenv` | Gets value of env var by name |
-| `envbuf_setenv` | Sets or adds an env var (reallocates if needed) |
-| `envbuf_unsetenv` | Removes an env var (reallocates) |
+| `envbuf_setenv` | Sets or adds an env var; returns the (possibly reallocated) env array |
+| `envbuf_unsetenv` | Removes an env var; returns the (possibly reallocated) env array |
 
 ---
 
@@ -136,8 +136,9 @@ All components reference this path. The deploy structure is:
 | `/private/var/ammonia/core/libopener.dylib` | Tweak loader library |
 | `/private/var/ammonia/core/fridagum.dylib` | Frida-Gum shared library |
 | `/private/var/ammonia/core/tweaks/` | User-provided tweak `.dylib` files |
-| `/private/var/ammonia/core/gui/` | Reserved for GUI components |
+| `/private/var/ammonia/core/gui/` | GUI tweak `.dylib` files (same loading rules as `tweaks/`) |
 | `/private/var/ammonia/core/ammonia.blacklist` | Optional process blacklist |
+| `/private/var/ammonia/core/ammonia.disable-xpcproxy` | Optional flag file; disables libinfect propagation through `xpcproxy` |
 | `/private/var/ammonia/core/infect.log` | Log file (appended to) |
 | `/Library/LaunchDaemons/com.bedtime.ammonia.plist` | LaunchDaemon plist |
 
@@ -220,7 +221,7 @@ Each tweak `.dylib` can have sibling `.whitelist` or `.blacklist` files in the t
 - **Whitelist** (`.whitelist`): Only load this tweak if the current process path matches an entry (exact path match or suffix match)
 - **Blacklist** (`.blacklist`): Load this tweak unless the process path matches an entry
 - If **neither** file exists, the tweak is **not loaded**
-- If **both** exist, whitelist takes precedence (blacklist is ignored)
+- If **both** exist, whitelist takes precedence and a warning is logged to syslog
 
 Entries in filter files can be:
 - An exact path (contains `/`): compared via `strcmp`
@@ -258,7 +259,8 @@ Entries in filter files can be:
 
 ### Shellcode Injection (`ammonia/main.m`)
 
-- Shellcode is a flat `char[]` with placeholder zeros for function pointers and the payload path string
+- Shellcode is a flat `char[]` with placeholder zeros for function pointers and a payload path pointer slot
+- The payload path is built from `SupportFolderP` and written into launchd's address space separately (no inline length limit)
 - Function addresses are patched in at runtime: `dlsym(RTLD_DEFAULT, "pthread_create_from_mach_thread")` and `dlsym(RTLD_DEFAULT, "dlopen")`
 - The sentinel value `0x79616265` ("ebay") in the thread's return register confirms the shellcode executed
 - **arm64e specifics**:
@@ -287,13 +289,4 @@ Entries in filter files can be:
 
 ## Important Gotchas
 
-1. **Hardcoded path length**: `payload_path` in `main.m` is hardcoded to fit within the 128-byte space at the end of the shellcode buffer. Changing the path requires adjusting both the code and the shellcode layout.
-2. **No `dlerror` in libinfect**: `SpawnOld`/`SpawnPNew` replacement functions and blacklist loading never report `dlerror` if symbols are missing.
-3. **envbuf double-pointer semantics**: `envbuf_setenv` and `envbuf_unsetenv` take `char **envpp[]` (pointer to the pointer array) because `realloc` may change the base pointer.
-4. **opener only loads from `tweaks/`**: The `gui/` directory is created by the package installer but never referenced in code.
-5. **No hot-reload**: Tweak loading happens only once at library init (constructor); no runtime re-scan mechanism.
-6. **Whitelist takes priority**: If both `.whitelist` and `.blacklist` exist for a tweak, only the whitelist is consulted.
-7. **Blacklist uses suffix matching**: The `ammonia.blacklist` uses `path_ends_with` (suffix match), while the per-tweak blacklist/whitelist uses `path_matches_entry` (exact path or suffix).
-8. **LaunchDaemon `KeepAlive` is `false`**: The daemon runs once, injects, and exits. It is not respawned by launchd.
-9. **xpcproxy inheritance**: When `xpcproxy` spawns, `liblibinfect.dylib` is injected into it, extending the hook to processes it spawns (e.g., XPC services).
-10. **No test coverage**: The project has no automated tests; verification is manual via `infect.log`.
+1. **No test coverage**: The project has no automated tests; verification is manual via `infect.log`.

@@ -35,7 +35,10 @@ cat > /Library/LaunchDaemons/com.bedtime.ammonia.plist <<'PLIST'
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
-    <false/>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
 </dict>
 </plist>
 PLIST

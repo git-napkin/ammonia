@@ -103,7 +103,7 @@ Loaded via `dlopen` inside launchd. Uses **Frida-Gum** (statically linked) to:
 
 - Intercept `posix_spawn` and `posix_spawnp` via `gum_interceptor_replace`.
 - `loginwindow`: Always inject `libopener.dylib`.
-- `xpcproxy`: Inject `liblibinfect.dylib` (spreads the hook to child processes).
+- `xpcproxy`: Inject `liblibinfect.dylib` (spreads the hook to child processes), unless disabled via `ammonia.disable-xpcproxy`.
 - **UI processes** (darwin role `UI_FOCAL`, `UI`, or `UI_NON_FOCAL`): Inject `libopener.dylib`, subject to the global blacklist.
 - **Drivers** (path ending in `Driver`): Skipped entirely.
 - Appends to `DYLD_INSERT_LIBRARIES` if already set.
@@ -115,10 +115,11 @@ Loaded via `dlopen` inside launchd. Uses **Frida-Gum** (statically linked) to:
 Injected into target processes via `DYLD_INSERT_LIBRARIES`. It:
 
 1. Dynamically loads `fridagum.dylib` (shared library).
-2. Scans `/private/var/ammonia/core/tweaks/` for `.dylib` files.
+2. Scans `/private/var/ammonia/core/tweaks/` and `/private/var/ammonia/core/gui/` for loadable modules.
 3. Runs security checks (ownership, permissions, path traversal).
 4. Evaluates per-tweak whitelist/blacklist filters.
 5. Calls `dlopen` and optionally invokes `LoadFunction(void *gum_interceptor)`.
+6. Responds to `SIGUSR1` by rescanning both directories and loading new or modified modules.
 
 ---
 
@@ -193,7 +194,7 @@ Each tweak `.dylib` can have a sibling `.whitelist` or `.blacklist` file in the 
 | `.whitelist` | Load the tweak **only if** the current process path matches an entry |
 | `.blacklist` | Load the tweak **unless** the process path matches an entry          |
 | Neither      | **Skip** the tweak (never loaded)                                    |
-| Both         | Whitelist takes precedence; blacklist is ignored                     |
+| Both         | Whitelist takes precedence; a warning is logged if both files exist |
 
 
 
@@ -222,7 +223,7 @@ Entries in filter files can be:
 
 ## Global Process Blacklist
 
-The file `/private/var/ammonia/core/ammonia.blacklist` prevents opener injection into specific processes globally (Stage 2). Lines support `#` comments and whitespace trimming. Matching uses suffix/name matching via `path_ends_with`.
+The file `/private/var/ammonia/core/ammonia.blacklist` prevents opener injection into specific processes globally (Stage 2). Lines support `#` comments and whitespace trimming. Matching uses `path_matches_entry` (exact path or suffix name).
 
 This is independent of per-tweak filtering — blacklisted processes never receive `libopener.dylib` at all.
 
@@ -258,8 +259,9 @@ This is independent of per-tweak filtering — blacklisted processes never recei
 | `/private/var/ammonia/core/libopener.dylib`        | Tweak loader library               |
 | `/private/var/ammonia/core/fridagum.dylib`         | Frida-Gum shared library           |
 | `/private/var/ammonia/core/tweaks/`                | User-provided tweak `.dylib` files |
-| `/private/var/ammonia/core/gui/`                   | Reserved for GUI components        |
+| `/private/var/ammonia/core/gui/`                   | GUI tweak `.dylib` files (same loading rules as `tweaks/`) |
 | `/private/var/ammonia/core/ammonia.blacklist`      | Optional process blacklist         |
+| `/private/var/ammonia/core/ammonia.disable-xpcproxy` | Optional flag to disable xpcproxy hook propagation |
 | `/private/var/ammonia/core/infect.log`             | Stage 2 log file (appended)        |
 | `/Library/LaunchDaemons/com.bedtime.ammonia.plist` | LaunchDaemon plist                 |
 
@@ -283,7 +285,7 @@ sudo rm -f /Library/LaunchDaemons/com.bedtime.ammonia.plist
 ## Debug Logging
 
 - **Stage 2** (`liblibinfect.dylib`): Writes to `/private/var/ammonia/core/infect.log` — logs which processes receive opener injection and blacklist skips.
-- **Stage 3** (`libopener.dylib`): Uses `syslog` with `LOG_ERR`/`LOG_INFO` — view with `log stream --predicate 'eventMessage contains "ammonia"'`.
+- **Stage 3** (`libopener.dylib`): Uses `syslog` with `LOG_ERR`/`LOG_INFO` — view with `log stream --predicate 'eventMessage contains "ammonia"'`. Send `kill -USR1 <pid>` to trigger a tweak rescan without restarting the process.
 
 ---
 

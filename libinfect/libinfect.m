@@ -14,6 +14,8 @@
 #include <mach-o/nlist.h>
 
 #include <ctype.h>
+#include <dlfcn.h>
+#include <errno.h>
 #include <spawn.h>
 #include <stdarg.h>
 #include <stdbool.h>
@@ -54,6 +56,9 @@ int (*SpawnOld)(pid_t *pid, const char *path,
                 const posix_spawnattr_t *ab, char *const __argv[],
                 char *const __envp[]);
 
+static int (*GetDarwinRoleNp)(const posix_spawnattr_t *__restrict attr,
+                              uint64_t *__restrict darwin_rolep);
+
 static bool path_ends_with(const char *path, const char *suffix) {
     if (!path || !suffix) return false;
     size_t plen = strlen(path);
@@ -63,23 +68,55 @@ static bool path_ends_with(const char *path, const char *suffix) {
            (plen == slen || path[plen - slen - 1] == '/');
 }
 
+static bool path_matches_entry(const char *path, const char *entry) {
+    if (!path || !entry || entry[0] == '\0') return false;
+    if (strchr(entry, '/') != NULL) {
+        return (strcmp(path, entry) == 0);
+    }
+    return path_ends_with(path, entry);
+}
+
 static bool path_matches_driver(const char *path) {
     return path_ends_with(path, "Driver");
 }
 
 #define PathDriver(path) path_matches_driver(path)
 
-int posix_spawnattr_get_darwin_role_np(const posix_spawnattr_t *__restrict attr,
-                                       uint64_t *__restrict darwin_rolep);
 #define PRIO_DARWIN_ROLE_UI_FOCAL 0x1     /* On  screen,     focal UI */
 #define PRIO_DARWIN_ROLE_UI 0x2           /* On  screen UI,  focal unknown */
 #define PRIO_DARWIN_ROLE_UI_NON_FOCAL 0x4 /* On  screen, non-focal UI */
 
+static const char *gum_replace_strerror(GumReplaceReturn ret) {
+  switch (ret) {
+  case GUM_REPLACE_OK:
+    return "ok";
+  case GUM_REPLACE_WRONG_SIGNATURE:
+    return "wrong signature";
+  case GUM_REPLACE_ALREADY_REPLACED:
+    return "already replaced";
+  case GUM_REPLACE_POLICY_VIOLATION:
+    return "policy violation";
+  case GUM_REPLACE_WRONG_TYPE:
+    return "wrong type";
+  default:
+    return "unknown error";
+  }
+}
+
 /* --- ammonia.blacklist storage --- */
 static char **ammonia_blacklist = NULL;
 static size_t ammonia_blacklist_count = 0;
+static bool disable_xpcproxy_injection = false;
 
-/* load ammonia.blacklist (substring-match style like opener.c) */
+static bool flag_file_exists(const char *filename) {
+  char pathbuf[PATH_MAX];
+  if (snprintf(pathbuf, sizeof(pathbuf), "%s%s", SupportFolderP, filename) >=
+      (int)sizeof(pathbuf)) {
+    return false;
+  }
+  return access(pathbuf, F_OK) == 0;
+}
+
 static void load_ammonia_blacklist(void) {
   char pathbuf[PATH_MAX];
   if (snprintf(pathbuf, sizeof(pathbuf), "%s%s", SupportFolderP,
@@ -90,7 +127,10 @@ static void load_ammonia_blacklist(void) {
 
   FILE *f = fopen(pathbuf, "r");
   if (!f) {
-    // blacklist optional; silently continue
+    if (errno != ENOENT) {
+      LogToFile("ammonia: failed to open blacklist '%s': %s\n", pathbuf,
+                strerror(errno));
+    }
     return;
   }
 
@@ -120,12 +160,15 @@ static void load_ammonia_blacklist(void) {
 
     // duplicate and store
     char *entry = strdup(start);
-    if (!entry)
+    if (!entry) {
+      LogToFile("ammonia: failed to allocate blacklist entry\n");
       continue;
+    }
 
     char **tmp = realloc(ammonia_blacklist,
                          (ammonia_blacklist_count + 1) * sizeof(char *));
     if (!tmp) {
+      LogToFile("ammonia: failed to grow blacklist array\n");
       free(entry);
       continue;
     }
@@ -133,12 +176,15 @@ static void load_ammonia_blacklist(void) {
     ammonia_blacklist[ammonia_blacklist_count++] = entry;
   }
 
+  if (ferror(f)) {
+    LogToFile("ammonia: error reading blacklist '%s': %s\n", pathbuf,
+              strerror(errno));
+  }
+
   free(line);
   fclose(f);
 }
 
-/* returns true if `path` should be considered blacklisted (substring matching)
- */
 static bool is_path_blacklisted(const char *path) {
   if (!path || ammonia_blacklist_count == 0)
     return false;
@@ -146,7 +192,7 @@ static bool is_path_blacklisted(const char *path) {
     const char *entry = ammonia_blacklist[i];
     if (!entry || entry[0] == '\0')
       continue;
-    if (path_ends_with(path, entry)) {
+    if (path_matches_entry(path, entry)) {
       return true;
     }
   }
@@ -156,12 +202,18 @@ static bool is_path_blacklisted(const char *path) {
 int SpawnNew(pid_t *pid, const char *path, const posix_spawn_file_actions_t *ac,
              const posix_spawnattr_t *ab, char *const __argv[],
              char *const __envp[]) {
+  if (SpawnOld == NULL) {
+    LogToFile("ammonia: SpawnOld is NULL, cannot call posix_spawn for '%s'\n",
+              path ? path : "(null)");
+    return EINVAL;
+  }
+
   char **playground = envbuf_mutcopy((const char **)__envp);
   int k;
 
   uint64_t darwin_rolep = 0;
-  if (ab != NULL) {
-    posix_spawnattr_get_darwin_role_np(ab, &darwin_rolep);
+  if (ab != NULL && GetDarwinRoleNp != NULL) {
+    GetDarwinRoleNp(ab, &darwin_rolep);
   }
 
   if (strcmp(path, "/System/Library/CoreServices/loginwindow.app/Contents/"
@@ -169,8 +221,10 @@ int SpawnNew(pid_t *pid, const char *path, const posix_spawn_file_actions_t *ac,
     goto InjectOpener;
   }
   if (strcmp(path, "/usr/libexec/xpcproxy") == 0) {
-    envbuf_setenv(&playground, "DYLD_INSERT_LIBRARIES",
-                  SupportFolderP "liblibinfect.dylib");
+    if (!disable_xpcproxy_injection) {
+      playground = envbuf_setenv(playground, "DYLD_INSERT_LIBRARIES",
+                                 SupportFolderP "liblibinfect.dylib");
+    }
   } else if (!PathDriver(path)) {
     if (darwin_rolep == PRIO_DARWIN_ROLE_UI_FOCAL ||
         darwin_rolep == PRIO_DARWIN_ROLE_UI ||
@@ -192,11 +246,12 @@ int SpawnNew(pid_t *pid, const char *path, const posix_spawn_file_actions_t *ac,
         const char *old = playground[idx] + strlen("DYLD_INSERT_LIBRARIES=");
         char *combined = NULL;
         if (asprintf(&combined, "%s:%s", old, newlib) != -1) {
-          envbuf_setenv(&playground, "DYLD_INSERT_LIBRARIES", combined);
+          playground =
+              envbuf_setenv(playground, "DYLD_INSERT_LIBRARIES", combined);
           free(combined);
         }
       } else {
-        envbuf_setenv(&playground, "DYLD_INSERT_LIBRARIES", newlib);
+        playground = envbuf_setenv(playground, "DYLD_INSERT_LIBRARIES", newlib);
       }
     }
   }
@@ -216,17 +271,50 @@ int SpawnPNew(pid_t *restrict pid, const char *restrict path,
 
 void __attribute__((constructor)) Infect(void) {
   load_ammonia_blacklist();
+  disable_xpcproxy_injection = flag_file_exists("ammonia.disable-xpcproxy");
+  if (disable_xpcproxy_injection) {
+    LogToFile("ammonia: xpcproxy libinfect propagation disabled\n");
+  }
+
+  GetDarwinRoleNp =
+      dlsym(RTLD_DEFAULT, "posix_spawnattr_get_darwin_role_np");
+  if (!GetDarwinRoleNp) {
+    LogToFile("ammonia: failed to resolve posix_spawnattr_get_darwin_role_np: %s\n",
+              dlerror());
+  }
 
   gum_init_embedded();
   GumInterceptor *interceptor = gum_interceptor_obtain();
   gum_interceptor_begin_transaction(interceptor);
-  gum_interceptor_replace(
-      interceptor,
-      (gpointer)gum_module_find_global_export_by_name("posix_spawn"),
-      (gpointer)SpawnNew, NULL, (gpointer *)&SpawnOld);
-  gum_interceptor_replace(
-      interceptor,
-      (gpointer)gum_module_find_global_export_by_name("posix_spawnp"),
-      (gpointer)SpawnPNew, NULL, (gpointer *)(NULL));
+
+  gpointer posix_spawn_addr =
+      (gpointer)gum_module_find_global_export_by_name("posix_spawn");
+  if (posix_spawn_addr == NULL) {
+    LogToFile("ammonia: failed to find export 'posix_spawn'\n");
+  } else {
+    GumReplaceReturn spawn_ret = gum_interceptor_replace(
+        interceptor, posix_spawn_addr, (gpointer)SpawnNew, NULL,
+        (gpointer *)&SpawnOld);
+    if (spawn_ret != GUM_REPLACE_OK) {
+      LogToFile("ammonia: failed to replace posix_spawn: %s\n",
+                gum_replace_strerror(spawn_ret));
+    } else if (SpawnOld == NULL) {
+      LogToFile("ammonia: posix_spawn replacement succeeded but SpawnOld is NULL\n");
+    }
+  }
+
+  gpointer posix_spawnp_addr =
+      (gpointer)gum_module_find_global_export_by_name("posix_spawnp");
+  if (posix_spawnp_addr == NULL) {
+    LogToFile("ammonia: failed to find export 'posix_spawnp'\n");
+  } else {
+    GumReplaceReturn spawnp_ret = gum_interceptor_replace(
+        interceptor, posix_spawnp_addr, (gpointer)SpawnPNew, NULL, NULL);
+    if (spawnp_ret != GUM_REPLACE_OK) {
+      LogToFile("ammonia: failed to replace posix_spawnp: %s\n",
+                gum_replace_strerror(spawnp_ret));
+    }
+  }
+
   gum_interceptor_end_transaction(interceptor);
 }

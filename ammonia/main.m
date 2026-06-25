@@ -8,9 +8,14 @@
 #include <unistd.h>
 #include <ptrauth.h>
 
-kern_return_t (*_thread_convert_thread_state)(thread_act_t thread, int direction, thread_state_flavor_t flavor, thread_state_t in_state, mach_msg_type_number_t in_stateCnt, thread_state_t out_state, mach_msg_type_number_t *out_stateCnt);
+#include "ammonia.h"
 
-static char *payload_path = "/private/var/ammonia/core/liblibinfect.dylib";
+#define SHELLCODE_PCFMT_OFFSET 88
+#define SHELLCODE_DLOPEN_OFFSET 164
+#define SHELLCODE_PAYLOAD_PTR_OFFSET 172
+#define SHELLCODE_SIZE 180
+
+kern_return_t (*_thread_convert_thread_state)(thread_act_t thread, int direction, thread_state_flavor_t flavor, thread_state_t in_state, mach_msg_type_number_t in_stateCnt, thread_state_t out_state, mach_msg_type_number_t *out_stateCnt);
 
 //
 // :Attribution
@@ -49,8 +54,9 @@ static char shell_code[] =
 "\xA0\xC3\x1F\xB8"                 // stur       w0, [x29, #-0x4]
 "\xE1\x0B\x00\xF9"                 // str        x1, [sp, #0x10]
 "\x21\x00\x80\xD2"                 // mov        x1, #1
-"\x60\x01\x00\x10"                 // adr        x0, #0x2c ; payload_path
-"\x09\x01\x00\x10"                 // adr        x9, #0x20 ; dlopen
+"\x89\x01\x00\x10"                 // adr        x9, #0x30 ; payload_path pointer slot
+"\x20\x01\x40\xF9"                 // ldr        x0, [x9]
+"\x09\x01\x00\x10"                 // adr        x9, #0x20 ; dlopen pointer slot
 "\x29\x01\x40\xF9"                 // ldr        x9, [x9]
 "\x20\x01\x3F\xD6"                 // blr        x9
 "\x09\x00\x80\x52"                 // mov        w9, #0
@@ -58,20 +64,8 @@ static char shell_code[] =
 "\xFD\x7B\x42\xA9"                 // ldp        x29, x30, [sp, #0x20]
 "\xFF\xC3\x00\x91"                 // add        sp, sp, #0x30
 "\xFF\x0F\x5F\xD6"                 // retab
-"\x00\x00\x00\x00\x00\x00\x00\x00" //
-"\x00\x00\x00\x00\x00\x00\x00\x00" // empty space for payload_path
-"\x00\x00\x00\x00\x00\x00\x00\x00"
-"\x00\x00\x00\x00\x00\x00\x00\x00"
-"\x00\x00\x00\x00\x00\x00\x00\x00"
-"\x00\x00\x00\x00\x00\x00\x00\x00"
-"\x00\x00\x00\x00\x00\x00\x00\x00"
-"\x00\x00\x00\x00\x00\x00\x00\x00"
-"\x00\x00\x00\x00\x00\x00\x00\x00"
-"\x00\x00\x00\x00\x00\x00\x00\x00"
-"\x00\x00\x00\x00\x00\x00\x00\x00"
-"\x00\x00\x00\x00\x00\x00\x00\x00"
-"\x00\x00\x00\x00\x00\x00\x00\x00"
-"\x00\x00\x00\x00\x00\x00\x00\x00";
+"\x00\x00\x00\x00\x00\x00\x00\x00" // dlopen pointer slot
+"\x00\x00\x00\x00\x00\x00\x00\x00"; // payload_path pointer slot
 
 int main(int argc, char **argv)
 {
@@ -80,10 +74,23 @@ int main(int argc, char **argv)
     thread_act_t thread = 0;
     mach_vm_address_t code = 0;
     mach_vm_address_t stack = 0;
+    mach_vm_address_t payload_str = 0;
     vm_size_t stack_size = 16 * 1024;
     uint64_t stack_contents = 0x00000000CAFEBABE;
     pid_t pid = 1;
     kern_return_t error;
+    char payload_path[PATH_MAX];
+
+    if (snprintf(payload_path, sizeof(payload_path), "%s%s", SupportFolderP,
+                 "liblibinfect.dylib") >= (int)sizeof(payload_path)) {
+        fprintf(stderr, "payload path too long\n");
+        return 1;
+    }
+
+    if (sizeof(shell_code) != SHELLCODE_SIZE) {
+        fprintf(stderr, "shellcode layout mismatch\n");
+        return 1;
+    }
 
     if (task_for_pid(mach_task_self(), pid, &task) != KERN_SUCCESS) {
         fprintf(stderr, "could not retrieve task port for pid: %d\n", pid);
@@ -110,12 +117,24 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    size_t payload_len = strlen(payload_path) + 1;
+    if (mach_vm_allocate(task, &payload_str, payload_len, VM_FLAGS_ANYWHERE) != KERN_SUCCESS) {
+        fprintf(stderr, "could not allocate payload path segment\n");
+        return 1;
+    }
+
+    if (mach_vm_write(task, payload_str, (vm_address_t)payload_path, payload_len) != KERN_SUCCESS) {
+        fprintf(stderr, "could not copy payload path into launchd\n");
+        return 1;
+    }
+
     uint64_t pcfmt_address = (uint64_t) ptrauth_strip(dlsym(RTLD_DEFAULT, "pthread_create_from_mach_thread"), ptrauth_key_function_pointer);
     uint64_t dlopen_address = (uint64_t) ptrauth_strip(dlsym(RTLD_DEFAULT, "dlopen"), ptrauth_key_function_pointer);
+    uint64_t payload_address = (uint64_t)payload_str;
 
-    memcpy(shell_code + 88, &pcfmt_address, sizeof(uint64_t));
-    memcpy(shell_code + 160, &dlopen_address, sizeof(uint64_t));
-    memcpy(shell_code + 168, payload_path, strlen(payload_path));
+    memcpy(shell_code + SHELLCODE_PCFMT_OFFSET, &pcfmt_address, sizeof(uint64_t));
+    memcpy(shell_code + SHELLCODE_DLOPEN_OFFSET, &dlopen_address, sizeof(uint64_t));
+    memcpy(shell_code + SHELLCODE_PAYLOAD_PTR_OFFSET, &payload_address, sizeof(uint64_t));
 
     if (mach_vm_write(task, code, (vm_address_t) shell_code, sizeof(shell_code)) != KERN_SUCCESS) {
         fprintf(stderr, "could not copy shellcode into code segment\n");
