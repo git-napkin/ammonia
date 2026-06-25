@@ -1630,7 +1630,6 @@ typedef unsigned long guintptr;
 
 #define G_VA_COPY va_copy
 
-#define G_VA_COPY_AS_ARRAY 1
 
 #define G_HAVE_ISO_VARARGS 1
 

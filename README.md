@@ -15,7 +15,7 @@ Ammonia is a modern macOS extension/tweak loader, enabling modifications on Mac 
 
 Ammonia simply loads dynamic libraries at runtime. This allows developers to write and inject functionality directly into the runtime environment with minimal setup.
 
-You must compile for both `arm64` & `arm64e` architectures. (And optionally x86_64 if Rosetta support is desired)
+You must compile for both `arm64` & `arm64e` architectures.
 
 ## Example (using clang or Makefile):
 

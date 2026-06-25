@@ -10,7 +10,7 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 # Set the architectures to build for
-set(CMAKE_OSX_ARCHITECTURES "x86_64;arm64e")
+set(CMAKE_OSX_ARCHITECTURES "arm64e")
 
 # Add the main executable
 set(AMMONIA_SOURCES
@@ -42,7 +42,7 @@ add_library(libinfect SHARED
 target_link_libraries(libinfect
     ${COCOA_FRAMEWORK}
     ${COREFOUNDATION_FRAMEWORK} 
-    ${CMAKE_CURRENT_SOURCE_DIR}/libfrida-gum-x86_64-arm64e-arm64.a
+    ${CMAKE_CURRENT_SOURCE_DIR}/libfrida-gum-arm64e-arm64.a
 )
 
 target_include_directories(libinfect PRIVATE

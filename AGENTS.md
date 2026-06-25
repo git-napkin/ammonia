@@ -39,7 +39,7 @@ ammonia/
 ├── ammonia.pkg                  # Pre-built installer (gitignored)
 ├── compile.sh                   # CMake configure + make wrapper
 ├── fridagum.dylib               # Pre-built Frida-Gum shared library
-├── libfrida-gum-x86_64-arm64e-arm64.a  # Multi-arch Frida-Gum static library
+├── libfrida-gum-arm64e-arm64.a  # Multi-arch Frida-Gum static library
 ├── package.sh                   # Creates macOS .pkg installer
 ├── setup_frida.sh               # Downloads and builds Frida-Gum dependencies
 └── uninstaller.sh               # Removes Ammonia from the system
@@ -62,12 +62,11 @@ Compiled into an executable (`ammonia`) that runs as a LaunchDaemon (`com.bedtim
 
 #### Platform-specific details
 
-- **x86_64**: Uses `thread_create_running` directly with `x86_thread_state64_t`. Two shellcode functions: outer calls `pthread_create_from_mach_thread`, inner calls `dlopen`.
-- **arm64e** (Apple Silicon): Uses `thread_create`, `thread_convert_thread_state` (dlsym'd from `libsystem_kernel.dylib`), then `thread_set_state` + `thread_resume`, or `thread_terminate` + `thread_create_running` for macOS 14.4+ / 15+. Uses `ptrauth` APIs for pointer authentication. Arm64e shellcode uses `pacibsp`/`retab` and `paciza` for authenticated pointers.
+- **arm64e**: Uses `thread_create`, `thread_convert_thread_state` (dlsym'd from `libsystem_kernel.dylib`), then `thread_set_state` + `thread_resume`, or `thread_terminate` + `thread_create_running` for macOS 14.4+ / 15+. Uses `ptrauth` APIs for pointer authentication. Arm64e shellcode uses `pacibsp`/`retab` and `paciza` for authenticated pointers.
 
 ### Stage 2: Injection Hook (`libinfect/libinfect.m`)
 
-Loaded via `dlopen` in launchd. Uses Frida-Gum (static library `libfrida-gum-x86_64-arm64e-arm64.a`).
+Loaded via `dlopen` in launchd. Uses Frida-Gum (static library `libfrida-gum-arm64e-arm64.a`).
 
 1. Constructor `Infect(void)` runs on library load.
 2. Calls `gum_init_embedded()` and `gum_interceptor_obtain()`.
@@ -151,11 +150,11 @@ All components reference this path. The deploy structure is:
 - **Minimum version**: 3.15
 - **Languages**: C, CXX, OBJC
 - **Build type**: Release (default)
-- **Architectures**: `x86_64` and `arm64e` (via `CMAKE_OSX_ARCHITECTURES`)
+- **Architectures**: `arm64e` (via `CMAKE_OSX_ARCHITECTURES`)
 - **ARC**: Objective-C Automatic Reference Counting enabled (`-fobjc-arc`) on all three targets
 - **Targets**:
   - `ammonia` — executable, links Cocoa + CoreFoundation
-  - `libinfect` — shared library (`.dylib`), links Cocoa + CoreFoundation + `libfrida-gum-x86_64-arm64e-arm64.a`
+  - `libinfect` — shared library (`.dylib`), links Cocoa + CoreFoundation + `libfrida-gum-arm64e-arm64.a`
   - `opener` — shared library (`.dylib`), links Foundation only
 - Uses `find_library` for macOS frameworks (Foundation, Cocoa, CoreFoundation)
 - Contains commented-out `ammapp` macOS app bundle target
@@ -169,10 +168,10 @@ cd Build && make -j8
 
 ### Frida Setup (`setup_frida.sh`)
 
-- Downloads Frida-Gum devkit v17.9.11 for x86_64, arm64e, and arm64 from GitHub releases
+- Downloads Frida-Gum devkit v17.9.11 for arm64e and arm64 from GitHub releases
 - Extracts each, renames per-arch `.a` files
 - Creates a fat static library via `lipo -create`
-- Builds `fridagum.dylib` shared library using `clang -arch x86_64 -arch arm64e -arch arm64 -lresolv -fpic -shared -Wl,-all_load`
+- Builds `fridagum.dylib` shared library using `clang -arch arm64e -arch arm64 -lresolv -fpic -shared -Wl,-all_load`
 - Copies outputs to the project root
 
 ### Packaging (`package.sh`)
@@ -207,7 +206,7 @@ sudo rm -f /Library/LaunchDaemons/com.bedtime.ammonia.plist
 
 ## Tweak Development (from `README.md`)
 
-Developers compile `.dylib` files targeting `arm64` + `arm64e` (and optionally `x86_64` for Rosetta).
+Developers compile `.dylib` files targeting `arm64` + `arm64e`.
 
 ### Entry Points (supported by opener)
 
@@ -270,7 +269,7 @@ Entries in filter files can be:
 
 ### Frida-Gum Integration
 
-- **Static linking** (`libfrida-gum-x86_64-arm64e-arm64.a`): Used by `liblibinfect.dylib` for hooking `posix_spawn`/`posix_spawnp` in launchd
+- **Static linking** (`libfrida-gum-arm64e-arm64.a`): Used by `liblibinfect.dylib` for hooking `posix_spawn`/`posix_spawnp` in launchd
 - **Dynamic loading** (`fridagum.dylib`): Used by `libopener.dylib` (loaded lazily into target processes)
 - The fork (dynamic vs static) exists because `liblibinfect.dylib` cannot rely on finding `fridagum.dylib` in launchd's environment, while `libopener.dylib` can load it naturally
 - The `gum_interceptor` is obtained once and passed to tweaks via `LoadFunction(void *interceptor)`
