@@ -13,6 +13,8 @@
 #include <mach-o/loader.h>
 #include <mach-o/nlist.h>
 
+#include <libkern/OSByteOrder.h>
+
 #include <ctype.h>
 #include <dlfcn.h>
 #include <errno.h>
@@ -199,6 +201,75 @@ static bool is_path_blacklisted(const char *path) {
   return false;
 }
 
+static bool macho64_has_sea_blob(int fd) {
+    struct mach_header_64 hdr;
+    if (read(fd, &hdr, sizeof(hdr)) != sizeof(hdr)) return false;
+    if (hdr.magic != MH_MAGIC_64) return false;
+
+    for (uint32_t i = 0; i < hdr.ncmds; i++) {
+        off_t cmd_start = lseek(fd, 0, SEEK_CUR);
+        if (cmd_start == (off_t)-1) return false;
+
+        struct load_command lc;
+        if (read(fd, &lc, sizeof(lc)) != sizeof(lc)) return false;
+
+        if (lc.cmd == LC_SEGMENT_64) {
+            lseek(fd, cmd_start, SEEK_SET);
+            struct segment_command_64 seg;
+            if (read(fd, &seg, sizeof(seg)) != sizeof(seg)) return false;
+
+            if (strncmp(seg.segname, "__TEXT", sizeof(seg.segname)) == 0) {
+                for (uint32_t j = 0; j < seg.nsects; j++) {
+                    struct section_64 sect;
+                    if (read(fd, &sect, sizeof(sect)) != sizeof(sect)) return false;
+                    if (strncmp(sect.sectname, "__NODE_SEA_BLOB", sizeof(sect.sectname)) == 0) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        lseek(fd, cmd_start + lc.cmdsize, SEEK_SET);
+    }
+
+    return false;
+}
+
+static bool is_node_sea_binary(const char *path) {
+    if (!path) return false;
+
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) return false;
+
+    uint32_t magic;
+    if (read(fd, &magic, sizeof(magic)) != sizeof(magic)) {
+        close(fd);
+        return false;
+    }
+
+    bool result = false;
+
+    if (magic == FAT_MAGIC || magic == FAT_CIGAM) {
+        struct fat_header fh;
+        lseek(fd, 0, SEEK_SET);
+        if (read(fd, &fh, sizeof(fh)) == sizeof(fh)) {
+            uint32_t narch = OSSwapBigToHostInt32(fh.nfat_arch);
+            for (uint32_t i = 0; i < narch && !result; i++) {
+                struct fat_arch arch;
+                if (read(fd, &arch, sizeof(arch)) != sizeof(arch)) break;
+                lseek(fd, OSSwapBigToHostInt32(arch.offset), SEEK_SET);
+                result = macho64_has_sea_blob(fd);
+            }
+        }
+    } else if (magic == MH_MAGIC_64) {
+        lseek(fd, 0, SEEK_SET);
+        result = macho64_has_sea_blob(fd);
+    }
+
+    close(fd);
+    return result;
+}
+
 int SpawnNew(pid_t *pid, const char *path, const posix_spawn_file_actions_t *ac,
              const posix_spawnattr_t *ab, char *const __argv[],
              char *const __envp[]) {
@@ -235,6 +306,12 @@ int SpawnNew(pid_t *pid, const char *path, const posix_spawn_file_actions_t *ac,
         goto Spawn;
       }
 
+      if (is_node_sea_binary(path)) {
+        LogToFile("ammonia: skipping opener for Node.js SEA binary '%s'\n",
+                  path);
+        goto Spawn;
+      }
+
     InjectOpener:
       LogToFile("ammonia: injecting opener into '%s'\n", path);
 
@@ -257,6 +334,12 @@ int SpawnNew(pid_t *pid, const char *path, const posix_spawn_file_actions_t *ac,
   }
 
 Spawn:
+  if (is_node_sea_binary(path)) {
+    LogToFile("ammonia: stripping DYLD_INSERT_LIBRARIES for Node.js SEA "
+              "binary '%s'\n",
+              path);
+    playground = envbuf_unsetenv(playground, "DYLD_INSERT_LIBRARIES");
+  }
   k = SpawnOld(pid, path, ac, ab, __argv, (char *const *)playground);
   envbuf_free(playground);
   return k;
