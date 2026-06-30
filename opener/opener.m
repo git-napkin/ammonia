@@ -92,7 +92,17 @@ static void record_loaded_module(const char *path, void *handle,
     loaded_count++;
 }
 
+static bool is_dylib_filename(const char *name) {
+    if (!name) return false;
+    size_t len = strlen(name);
+    if (len < 6) return false;
+    return strcmp(name + len - 6, ".dylib") == 0;
+}
+
 static void try_load_file(const char *subdir, const char *d_name, void *interceptor) {
+    if (!is_dylib_filename(d_name)) {
+        return;
+    }
     if (strstr(d_name, "..") != NULL || strchr(d_name, '/') != NULL) {
         syslog(LOG_ERR, "ammonia: rejecting path traversal attempt: %s", d_name);
         return;
@@ -110,7 +120,10 @@ static void try_load_file(const char *subdir, const char *d_name, void *intercep
              SupportFolderP, subdir, d_name);
 
     char exe_path[PATH_MAX];
-    GetExePath(exe_path, sizeof(exe_path));
+    if (!GetExePath(exe_path, sizeof(exe_path))) {
+        syslog(LOG_ERR, "ammonia: cannot resolve executable path for %s", d_name);
+        return;
+    }
     bool should_load = false;
 
     struct stat whitelist_st, blacklist_st;

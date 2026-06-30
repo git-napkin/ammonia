@@ -58,6 +58,11 @@ int (*SpawnOld)(pid_t *pid, const char *path,
                 const posix_spawnattr_t *ab, char *const __argv[],
                 char *const __envp[]);
 
+int (*SpawnPOld)(pid_t *restrict pid, const char *restrict file,
+                 const posix_spawn_file_actions_t *file_actions,
+                 const posix_spawnattr_t *restrict attrp,
+                 char *const argv[restrict], char *const envp[restrict]);
+
 static int (*GetDarwinRoleNp)(const posix_spawnattr_t *__restrict attr,
                               uint64_t *__restrict darwin_rolep);
 
@@ -270,16 +275,27 @@ static bool is_node_sea_binary(const char *path) {
     return result;
 }
 
-int SpawnNew(pid_t *pid, const char *path, const posix_spawn_file_actions_t *ac,
-             const posix_spawnattr_t *ab, char *const __argv[],
-             char *const __envp[]) {
-  if (SpawnOld == NULL) {
-    LogToFile("ammonia: SpawnOld is NULL, cannot call posix_spawn for '%s'\n",
+
+static int spawn_with_env(int (*spawn_fn)(pid_t *, const char *,
+                                          const posix_spawn_file_actions_t *,
+                                          const posix_spawnattr_t *,
+                                          char *const[], char *const[]),
+                          pid_t *pid, const char *path,
+                          const posix_spawn_file_actions_t *ac,
+                          const posix_spawnattr_t *ab, char *const __argv[],
+                          char *const __envp[]) {
+  if (spawn_fn == NULL) {
+    LogToFile("ammonia: original spawn function is NULL for '%s'\n",
               path ? path : "(null)");
     return EINVAL;
   }
 
   char **playground = envbuf_mutcopy((const char **)__envp);
+  if (__envp != NULL && playground == NULL) {
+    LogToFile("ammonia: failed to copy environment for '%s'\n",
+              path ? path : "(null)");
+    return ENOMEM;
+  }
   int k;
 
   uint64_t darwin_rolep = 0;
@@ -326,6 +342,10 @@ int SpawnNew(pid_t *pid, const char *path, const posix_spawn_file_actions_t *ac,
           playground =
               envbuf_setenv(playground, "DYLD_INSERT_LIBRARIES", combined);
           free(combined);
+        } else {
+          LogToFile("ammonia: failed to append opener to DYLD_INSERT_LIBRARIES "
+                    "for '%s'\n",
+                    path);
         }
       } else {
         playground = envbuf_setenv(playground, "DYLD_INSERT_LIBRARIES", newlib);
@@ -340,16 +360,22 @@ Spawn:
               path);
     playground = envbuf_unsetenv(playground, "DYLD_INSERT_LIBRARIES");
   }
-  k = SpawnOld(pid, path, ac, ab, __argv, (char *const *)playground);
+  k = spawn_fn(pid, path, ac, ab, __argv, (char *const *)playground);
   envbuf_free(playground);
   return k;
+}
+
+int SpawnNew(pid_t *pid, const char *path, const posix_spawn_file_actions_t *ac,
+             const posix_spawnattr_t *ab, char *const __argv[],
+             char *const __envp[]) {
+  return spawn_with_env(SpawnOld, pid, path, ac, ab, __argv, __envp);
 }
 
 int SpawnPNew(pid_t *restrict pid, const char *restrict path,
               const posix_spawn_file_actions_t *ac,
               const posix_spawnattr_t *restrict ab, char *const *restrict argv,
               char *const *restrict envp) {
-  return SpawnNew(pid, path, ac, ab, argv, envp);
+  return spawn_with_env(SpawnPOld, pid, path, ac, ab, argv, envp);
 }
 
 void __attribute__((constructor)) Infect(void) {
@@ -392,10 +418,13 @@ void __attribute__((constructor)) Infect(void) {
     LogToFile("ammonia: failed to find export 'posix_spawnp'\n");
   } else {
     GumReplaceReturn spawnp_ret = gum_interceptor_replace(
-        interceptor, posix_spawnp_addr, (gpointer)SpawnPNew, NULL, NULL);
+        interceptor, posix_spawnp_addr, (gpointer)SpawnPNew, NULL,
+        (gpointer *)&SpawnPOld);
     if (spawnp_ret != GUM_REPLACE_OK) {
       LogToFile("ammonia: failed to replace posix_spawnp: %s\n",
                 gum_replace_strerror(spawnp_ret));
+    } else if (SpawnPOld == NULL) {
+      LogToFile("ammonia: posix_spawnp replacement succeeded but SpawnPOld is NULL\n");
     }
   }
 

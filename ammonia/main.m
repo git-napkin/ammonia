@@ -130,6 +130,10 @@ int main(int argc, char **argv)
 
     uint64_t pcfmt_address = (uint64_t) ptrauth_strip(dlsym(RTLD_DEFAULT, "pthread_create_from_mach_thread"), ptrauth_key_function_pointer);
     uint64_t dlopen_address = (uint64_t) ptrauth_strip(dlsym(RTLD_DEFAULT, "dlopen"), ptrauth_key_function_pointer);
+    if (pcfmt_address == 0 || dlopen_address == 0) {
+        fprintf(stderr, "could not resolve pthread_create_from_mach_thread or dlopen\n");
+        return 1;
+    }
     uint64_t payload_address = (uint64_t)payload_str;
 
     memcpy(shell_code + SHELLCODE_PCFMT_OFFSET, &pcfmt_address, sizeof(uint64_t));
@@ -215,6 +219,8 @@ int main(int argc, char **argv)
 
         usleep(20000);
     }
+
+    result = 1;
 
 terminate:
     error = thread_terminate(thread);

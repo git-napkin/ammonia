@@ -20,9 +20,18 @@ char **envbuf_mutcopy(const char *envp[]) {
 
     int len = envbuf_len(envp);
     char **envcopy = malloc(len * sizeof(char *));
+    if (!envcopy)
+        return NULL;
 
     for (int i = 0; i < len - 1; i++) {
         envcopy[i] = strdup(envp[i]);
+        if (!envcopy[i]) {
+            for (int j = 0; j < i; j++) {
+                free(envcopy[j]);
+            }
+            free(envcopy);
+            return NULL;
+        }
     }
     envcopy[len - 1] = NULL;
 
