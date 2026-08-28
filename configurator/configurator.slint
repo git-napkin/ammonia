@@ -1,11 +1,34 @@
 import {
-    CheckBox,
-    Button,
-    VerticalBox,
-    ScrollView,
-    ListView,
+    Palette,
     LineEdit,
+    ListView,
 } from "std-widgets.slint";
+
+global Theme {
+    property <bool> dark: Palette.color-scheme == ColorScheme.dark;
+
+    out property <length> radius-control: 8px;
+    out property <length> radius-row: 12px;
+    out property <length> pad-row: 8px;
+    out property <length> pad-card: 8px;
+    out property <length> radius-card: 20px;
+
+    out property <brush> muted: Palette.foreground.transparentize(0.4);
+    out property <brush> faint: Palette.foreground.transparentize(0.55);
+    out property <brush> ring: root.dark ? rgba(255, 255, 255, 0.08) : rgba(0, 0, 0, 0.06);
+    out property <brush> ring-hover: root.dark ? rgba(255, 255, 255, 0.13) : rgba(0, 0, 0, 0.08);
+    out property <brush> image-outline: root.dark ? rgba(255, 255, 255, 0.1) : rgba(0, 0, 0, 0.1);
+    out property <brush> divider: root.dark ? rgba(255, 255, 255, 0.08) : rgba(0, 0, 0, 0.08);
+    out property <brush> row-hover: root.dark ? rgba(255, 255, 255, 0.05) : rgba(0, 0, 0, 0.04);
+    out property <brush> track-off: root.dark ? rgba(255, 255, 255, 0.14) : rgba(0, 0, 0, 0.12);
+    out property <color> success: #1f9d55;
+    out property <color> danger: #de3b3b;
+    out property <color> warning: #d8891f;
+    out property <brush> card: Palette.alternate-background;
+    out property <brush> lift: root.dark ? #00000000 : rgba(0, 0, 0, 0.08);
+    out property <length> lift-y: root.dark ? 0px : 1px;
+    out property <length> lift-blur: root.dark ? 0px : 4px;
+}
 
 export struct TweakInfo {
     name: string,
@@ -13,10 +36,424 @@ export struct TweakInfo {
     icon: image,
 }
 
+component SurfaceCard inherits Rectangle {
+    in property <length> content-padding: Theme.pad-card;
+    in property <length> content-radius: Theme.radius-row;
+    in property <length> gap: 0px;
+
+    border-radius: root.content-radius + root.content-padding;
+    background: Theme.card;
+    border-width: 1px;
+    border-color: Theme.ring;
+    drop-shadow-offset-x: 0px;
+    drop-shadow-offset-y: Theme.lift-y;
+    drop-shadow-blur: Theme.lift-blur;
+    drop-shadow-color: Theme.lift;
+    vertical-stretch: 0;
+
+    VerticalLayout {
+        padding: root.content-padding;
+        spacing: root.gap;
+        @children
+    }
+}
+
+component SectionLabel inherits Text {
+    font-size: 12px;
+    font-weight: 600;
+    color: Theme.muted;
+    wrap: word-wrap;
+}
+
+component RowDivider inherits HorizontalLayout {
+    padding-left: 12px;
+    padding-right: 12px;
+    height: 1px;
+    Rectangle {
+        height: 1px;
+        background: Theme.divider;
+        vertical-stretch: 0;
+    }
+}
+
+component AppButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> primary: false;
+    in property <bool> enabled: true;
+    in property <bool> no-scale: false;
+    in property <length> min-side: 72px;
+    callback clicked;
+
+    min-height: 40px;
+    min-width: root.min-side;
+    horizontal-stretch: 0;
+    vertical-stretch: 0;
+    border-radius: Theme.radius-control;
+    border-width: 1px;
+    border-color: root.primary ? Palette.accent-background : (touch.has-hover ? Theme.ring-hover : Theme.ring);
+    background: root.primary
+        ? (touch.pressed ? Palette.accent-background.darker(0.08) : (touch.has-hover ? Palette.accent-background.brighter(0.06) : Palette.accent-background))
+        : (touch.pressed ? Theme.row-hover : (touch.has-hover ? Theme.row-hover : Palette.control-background));
+    drop-shadow-offset-x: 0px;
+    drop-shadow-offset-y: root.primary ? Theme.lift-y : 0px;
+    drop-shadow-blur: root.primary ? Theme.lift-blur : 0px;
+    drop-shadow-color: root.primary ? Theme.lift : #00000000;
+    opacity: root.enabled ? 1 : 0.45;
+    transform-scale: (!root.no-scale && touch.pressed && root.enabled) ? 0.96 : 1;
+    animate transform-scale { duration: 150ms; easing: ease-out; }
+    animate background, border-color, drop-shadow-color { duration: 150ms; easing: ease-out; }
+
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        alignment: center;
+
+        Text {
+            text: root.text;
+            font-size: 13px;
+            font-weight: root.primary ? 600 : 500;
+            color: root.primary ? Palette.accent-foreground : Palette.foreground;
+            vertical-alignment: center;
+            horizontal-alignment: center;
+            wrap: word-wrap;
+        }
+    }
+
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: MouseCursor.pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+component IconButton inherits Rectangle {
+    in property <string> text: "–";
+    callback clicked;
+
+    width: 40px;
+    height: 40px;
+    horizontal-stretch: 0;
+    vertical-stretch: 0;
+    border-radius: Theme.radius-control;
+    border-width: 1px;
+    border-color: touch.has-hover ? Theme.ring-hover : Theme.ring;
+    background: touch.pressed ? Theme.row-hover : (touch.has-hover ? Theme.row-hover : Palette.control-background);
+    transform-scale: touch.pressed ? 0.96 : 1;
+    animate transform-scale { duration: 150ms; easing: ease-out; }
+    animate background, border-color { duration: 150ms; easing: ease-out; }
+
+    Text {
+        text: root.text;
+        font-size: 18px;
+        font-weight: 500;
+        color: Palette.foreground;
+        vertical-alignment: center;
+        horizontal-alignment: center;
+        y: 1px;
+    }
+
+    touch := TouchArea {
+        mouse-cursor: MouseCursor.pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+component ToggleRow inherits Rectangle {
+    in property <string> title;
+    in property <string> description;
+    in-out property <bool> checked;
+    min-height: 44px;
+    border-radius: Theme.radius-row;
+    background: touch.has-hover ? Theme.row-hover : transparent;
+    animate background { duration: 150ms; easing: ease-out; }
+
+    touch := TouchArea {
+        mouse-cursor: MouseCursor.pointer;
+        clicked => { root.checked = !root.checked; }
+    }
+
+    HorizontalLayout {
+        padding-top: 10px;
+        padding-bottom: 10px;
+        padding-left: 12px;
+        padding-right: 12px;
+        spacing: 12px;
+        alignment: center;
+
+        VerticalLayout {
+            spacing: 2px;
+            horizontal-stretch: 1;
+            alignment: center;
+
+            Text {
+                text: root.title;
+                font-size: 13px;
+                font-weight: 600;
+                color: Palette.foreground;
+                wrap: word-wrap;
+            }
+
+            if root.description != "": Text {
+                text: root.description;
+                font-size: 12px;
+                color: Theme.muted;
+                wrap: word-wrap;
+            }
+        }
+
+        track := Rectangle {
+            width: 40px;
+            height: 24px;
+            horizontal-stretch: 0;
+            vertical-stretch: 0;
+            border-radius: 12px;
+            background: root.checked ? Palette.accent-background : Theme.track-off;
+            animate background { duration: 200ms; easing: cubic-bezier(0.2, 0, 0, 1); }
+
+            Rectangle {
+                width: 20px;
+                height: 20px;
+                border-radius: 10px;
+                y: 2px;
+                x: 2px + self.progress * 16px;
+                property <float> progress: root.checked ? 1 : 0;
+                animate progress { duration: 200ms; easing: cubic-bezier(0.2, 0, 0, 1); }
+                background: #ffffff;
+                drop-shadow-offset-x: 0px;
+                drop-shadow-offset-y: 1px;
+                drop-shadow-blur: 2px;
+                drop-shadow-color: rgba(0, 0, 0, 0.22);
+            }
+        }
+    }
+}
+
+component StatusDot inherits Rectangle {
+    in property <color> fill;
+    width: 8px;
+    height: 8px;
+    border-radius: 4px;
+    background: root.fill;
+    animate background { duration: 200ms; easing: ease-out; }
+    horizontal-stretch: 0;
+    vertical-stretch: 0;
+}
+
+component StatusCard inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    in property <color> indicator;
+    in property <string> detail;
+    horizontal-stretch: 1;
+    vertical-stretch: 0;
+    border-radius: Theme.radius-card;
+    background: Theme.card;
+    border-width: 1px;
+    border-color: Theme.ring;
+    drop-shadow-offset-x: 0px;
+    drop-shadow-offset-y: Theme.lift-y;
+    drop-shadow-blur: Theme.lift-blur;
+    drop-shadow-color: Theme.lift;
+
+    VerticalLayout {
+        padding: 12px;
+        spacing: 8px;
+
+        Text {
+            text: root.label;
+            font-size: 12px;
+            font-weight: 600;
+            color: Theme.muted;
+            wrap: word-wrap;
+        }
+
+        HorizontalLayout {
+            spacing: 8px;
+            alignment: center;
+
+            StatusDot {
+                fill: root.indicator;
+            }
+
+            Text {
+                text: root.value;
+                font-size: 14px;
+                font-weight: 600;
+                color: Palette.foreground;
+                wrap: word-wrap;
+                horizontal-stretch: 1;
+                vertical-alignment: center;
+            }
+
+            @children
+        }
+
+        if root.detail != "": Text {
+            text: root.detail;
+            font-size: 12px;
+            color: Theme.muted;
+            wrap: word-wrap;
+        }
+    }
+}
+
+component EmptyHint inherits VerticalLayout {
+    in property <string> text;
+    padding: 20px;
+    alignment: center;
+    vertical-stretch: 1;
+
+    Text {
+        text: root.text;
+        font-size: 13px;
+        color: Theme.faint;
+        wrap: word-wrap;
+        horizontal-alignment: center;
+    }
+}
+
+component TweakIcon inherits Rectangle {
+    in property <image> source;
+    width: 32px;
+    height: 32px;
+    border-radius: Theme.radius-control;
+    clip: true;
+    horizontal-stretch: 0;
+    vertical-stretch: 0;
+
+    Image {
+        source: root.source;
+        width: 32px;
+        height: 32px;
+        image-fit: contain;
+    }
+
+    Rectangle {
+        border-width: 1px;
+        border-color: Theme.image-outline;
+        border-radius: Theme.radius-control;
+        background: transparent;
+    }
+}
+
+component TweakRow inherits Rectangle {
+    in property <string> name;
+    in property <bool> disabled;
+    in property <image> icon;
+    in property <bool> show-package;
+    callback edit();
+    callback toggle();
+    callback package();
+
+    min-height: 56px;
+    border-radius: Theme.radius-control + Theme.pad-row;
+    background: hover.has-hover ? Theme.row-hover : transparent;
+    animate background { duration: 150ms; easing: ease-out; }
+
+    hover := TouchArea { }
+
+    HorizontalLayout {
+        padding: Theme.pad-row;
+        spacing: 10px;
+        alignment: center;
+
+        TweakIcon {
+            source: root.icon;
+        }
+
+        VerticalLayout {
+            spacing: 3px;
+            horizontal-stretch: 1;
+            alignment: center;
+
+            Text {
+                text: root.name;
+                font-size: 14px;
+                font-weight: 600;
+                color: Palette.foreground;
+                overflow: elide;
+            }
+
+            HorizontalLayout {
+                spacing: 6px;
+                alignment: center;
+
+                StatusDot {
+                    fill: root.disabled ? Theme.danger : Theme.success;
+                }
+
+                Text {
+                    text: root.disabled ? "Disabled" : "Enabled";
+                    font-size: 12px;
+                    color: root.disabled ? Theme.danger : Theme.success;
+                    animate color { duration: 200ms; easing: ease-out; }
+                }
+            }
+        }
+
+        AppButton {
+            text: "Edit";
+            min-side: 64px;
+            clicked => { root.edit(); }
+        }
+
+        AppButton {
+            text: root.disabled ? "Enable" : "Disable";
+            primary: root.disabled;
+            min-side: 72px;
+            clicked => { root.toggle(); }
+        }
+
+        if root.show-package: AppButton {
+            text: "Package";
+            min-side: 80px;
+            clicked => { root.package(); }
+        }
+    }
+}
+
+component ChipRow inherits Rectangle {
+    in property <string> label;
+    callback remove();
+
+    min-height: 48px;
+    border-radius: Theme.radius-row;
+    background: hover.has-hover ? Theme.row-hover : transparent;
+    animate background { duration: 150ms; easing: ease-out; }
+
+    hover := TouchArea { }
+
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 4px;
+        padding-top: 4px;
+        padding-bottom: 4px;
+        spacing: 8px;
+        alignment: center;
+
+        Text {
+            text: root.label;
+            font-size: 13px;
+            color: Palette.foreground;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            overflow: elide;
+        }
+
+        IconButton {
+            clicked => { root.remove(); }
+        }
+    }
+}
+
 export component MainWindow inherits Window {
-    width: 560px;
-    height: 440px;
+    preferred-width: 640px;
+    preferred-height: 620px;
+    min-width: 540px;
+    min-height: 500px;
     title: "Plugin Playground Configurator";
+    background: Palette.background;
+    default-font-size: 13px;
 
     in-out property <bool> use-legacy-ammonia;
     in-out property <bool> disable-pac;
@@ -35,237 +472,167 @@ export component MainWindow inherits Window {
     callback install-daemon();
     callback uninstall-daemon();
 
-    VerticalBox {
-        padding: 16px;
-        spacing: 12px;
+    property <color> sip-color:
+        root.sip-status == "Enabled" ? Theme.danger
+        : (root.sip-status == "Partially Disabled (Debugging Restrictions Off)" || root.sip-status == "Disabled" ? Theme.success : Theme.warning);
+    property <string> sip-value:
+        root.sip-status == "Partially Disabled (Debugging Restrictions Off)" ? "Partially disabled"
+        : root.sip-status;
+    property <string> sip-detail:
+        root.sip-status == "Enabled" ? "Injection needs SIP disabled or partially disabled."
+        : (root.sip-status == "Partially Disabled (Debugging Restrictions Off)" ? "Debugging restrictions are off — ready for injection."
+        : (root.sip-status == "Disabled" ? "SIP is off — injection can run."
+        : "Could not determine SIP status."));
+    property <color> daemon-color:
+        root.daemon-status == "Running" ? Theme.success
+        : (root.daemon-status == "Stopped" ? Theme.warning : Theme.danger);
 
-        Text {
-            text: "Settings";
-            font-weight: 700;
-        }
-        Rectangle {
-            height: 1px;
-            background: #e8e8ed;
-            horizontal-stretch: 1;
-        }
+    VerticalLayout {
+        padding: 20px;
+        spacing: 16px;
 
-        CheckBox {
-            text: "Use legacy Ammonia tweaks folder";
-            checked <=> root.use-legacy-ammonia;
-        }
+        VerticalLayout {
+            spacing: 4px;
+            vertical-stretch: 0;
 
-        CheckBox {
-            text: "Disable arm64e (PAC) in newly spawned programs (work in progress)";
-            checked <=> root.disable-pac;
-        }
-
-        CheckBox {
-            text: "Pause tweak injection";
-            checked <=> root.pause-injection;
-        }
-
-        Text {
-            text: "System Status";
-            font-weight: 700;
-        }
-        Rectangle {
-            height: 1px;
-            background: #e8e8ed;
-            horizontal-stretch: 1;
-        }
-
-        HorizontalLayout {
-            spacing: 8px;
             Text {
-                text: "SIP Status: " + root.sip-status;
-                color: root.sip-status == "Enabled" ? #e74c3c : (root.sip-status == "Partially Disabled (Debugging Restrictions Off)" ? #2ecc71 : #e67e22);
-                vertical-alignment: center;
+                text: "Plugin Playground";
+                font-size: 22px;
+                font-weight: 700;
+                color: Palette.foreground;
                 wrap: word-wrap;
             }
+
             Text {
-                text: root.sip-status == "Enabled" ? "(Plugin Playground requires SIP to be disabled or partially disabled)" : "";
-                color: #e74c3c;
-                font-size: 11px;
-                vertical-alignment: center;
+                text: "Injection, launch daemon, and installed tweaks.";
+                font-size: 13px;
+                color: Theme.muted;
                 wrap: word-wrap;
             }
         }
 
-        Text {
-            text: "Launch Daemon";
-            font-weight: 700;
-        }
-        Rectangle {
-            height: 1px;
-            background: #e8e8ed;
-            horizontal-stretch: 1;
+        VerticalLayout {
+            spacing: 6px;
+            vertical-stretch: 0;
+
+            SectionLabel { text: "Settings"; }
+
+            SurfaceCard {
+                ToggleRow {
+                    title: "Legacy Ammonia folder";
+                    description: "Load tweaks from /private/var/ammonia/core/tweaks.";
+                    checked <=> root.use-legacy-ammonia;
+                }
+                RowDivider {}
+                ToggleRow {
+                    title: "Disable arm64e (PAC)";
+                    description: "Strip PAC from newly spawned programs. Work in progress.";
+                    checked <=> root.disable-pac;
+                }
+                RowDivider {}
+                ToggleRow {
+                    title: "Pause tweak injection";
+                    description: "Stop injecting into newly launched processes.";
+                    checked <=> root.pause-injection;
+                }
+            }
         }
 
         HorizontalLayout {
-            spacing: 8px;
-            Text {
-                text: root.daemon-status;
-                color: #888;
-                vertical-alignment: center;
+            spacing: 12px;
+            vertical-stretch: 0;
+
+            StatusCard {
+                label: "SIP";
+                value: root.sip-value;
+                indicator: root.sip-color;
+                detail: root.sip-detail;
             }
 
-            HorizontalLayout {
-                horizontal-stretch: 1;
-            }
+            StatusCard {
+                label: "Launch daemon";
+                value: root.daemon-status;
+                indicator: root.daemon-color;
 
-            Button {
-                text: "Install";
-                visible: root.daemon-status == "Not Installed";
-                clicked => { root.install-daemon(); }
-            }
+                if root.daemon-status == "Not Installed": AppButton {
+                    text: "Install";
+                    primary: true;
+                    min-side: 80px;
+                    clicked => { root.install-daemon(); }
+                }
 
-            Button {
-                text: "Uninstall";
-                visible: root.daemon-status != "Not Installed";
-                clicked => { root.uninstall-daemon(); }
+                if root.daemon-status != "Not Installed": AppButton {
+                    text: "Uninstall";
+                    min-side: 88px;
+                    clicked => { root.uninstall-daemon(); }
+                }
             }
         }
 
-        Text {
-            text: "Installed Tweaks";
-            font-weight: 700;
-        }
-        Rectangle {
-            height: 1px;
-            background: #e8e8ed;
-            horizontal-stretch: 1;
-        }
-
-        ScrollView {
+        VerticalLayout {
+            spacing: 6px;
             vertical-stretch: 1;
-            ListView {
-                for tweak in root.tweaks: Rectangle {
-                    border-radius: 8px;
-                    background: tw-hover.has-hover ? rgba(0, 0, 0, 0.04) : transparent;
-                    animate background { duration: 150ms; }
 
-                    drop-shadow-offset-x: 0px;
-                    drop-shadow-offset-y: 1px;
-                    drop-shadow-blur: 3px;
-                    drop-shadow-color: rgba(0, 0, 0, 0.06);
+            SectionLabel { text: "Installed tweaks"; }
 
-                    tw-hover := TouchArea { }
+            SurfaceCard {
+                vertical-stretch: 1;
+                content-radius: Theme.radius-control + Theme.pad-row;
 
-                    HorizontalLayout {
-                        spacing: 8px;
-                        padding: 8px;
+                if root.tweaks.length == 0: EmptyHint {
+                    text: "No tweaks installed. Add .dylib files to /opt/pluginplayground/tweaks.";
+                }
 
-                        Rectangle {
-                            width: 26px;
-                            height: 26px;
-                            border-width: 1px;
-                            border-color: rgba(0, 0, 0, 0.1);
-                            border-radius: 4px;
-
-                            Image {
-                                source: tweak.icon;
-                                width: 24px;
-                                height: 24px;
-                                x: 1px;
-                                y: 1px;
-                            }
-                        }
-
-                        VerticalLayout {
-                            spacing: 2px;
-                            Text {
-                                text: tweak.name;
-                                font-size: 14px;
-                                font-weight: 600;
-                                wrap: word-wrap;
-                            }
-
-                            HorizontalLayout {
-                                spacing: 4px;
-                                Rectangle {
-                                    width: 8px;
-                                    height: 8px;
-                                    border-radius: 4px;
-                                    background: tweak.disabled ? #e74c3c : #2ecc71;
-                                    animate background { duration: 200ms; }
-                                }
-
-                                Text {
-                                    text: tweak.disabled ? "Disabled" : "Enabled";
-                                    font-size: 11px;
-                                    color: tweak.disabled ? #e74c3c : #2ecc71;
-                                }
-                            }
-                        }
-
-                        HorizontalLayout {
-                            horizontal-stretch: 1;
-                        }
-
-                        HorizontalLayout {
-                            spacing: 4px;
-                            Button {
-                                text: "Edit";
-                                horizontal-stretch: 1;
-                                min-width: 72px;
-                                clicked => {
-                                    root.edit-tweak(tweak.name);
-                                }
-                            }
-
-                            Button {
-                                text: tweak.disabled ? "Enable" : "Disable";
-                                horizontal-stretch: 1;
-                                min-width: 72px;
-                                clicked => {
-                                    root.toggle-tweak(tweak.name);
-                                }
-                            }
-
-                            Button {
-                                text: "Package";
-                                visible: root.dev-tools-available;
-                                horizontal-stretch: 1;
-                                min-width: 72px;
-                                clicked => {
-                                    root.package-tweak(tweak.name);
-                                }
-                            }
-                        }
+                if root.tweaks.length > 0: ListView {
+                    vertical-stretch: 1;
+                    for tweak in root.tweaks: TweakRow {
+                        name: tweak.name;
+                        disabled: tweak.disabled;
+                        icon: tweak.icon;
+                        show-package: root.dev-tools-available;
+                        edit => { root.edit-tweak(tweak.name); }
+                        toggle => { root.toggle-tweak(tweak.name); }
+                        package => { root.package-tweak(tweak.name); }
                     }
                 }
             }
         }
 
         HorizontalLayout {
-            spacing: 8px;
-            Button {
-                text: "Save Settings";
-                min-width: 120px;
-                clicked => {
-                    root.save();
-                }
-            }
+            spacing: 12px;
+            alignment: center;
+            vertical-stretch: 0;
+            min-height: 40px;
 
-            HorizontalLayout {
+            Text {
+                text: root.status-message;
+                color: Theme.muted;
+                font-size: 12px;
+                wrap: word-wrap;
+                vertical-alignment: center;
                 horizontal-stretch: 1;
+                opacity: root.status-message == "" ? 0 : 1;
+                animate opacity { duration: 150ms; easing: ease-out; }
             }
-        }
 
-        Text {
-            text: root.status-message;
-            color: #888;
-            font-size: 12px;
-            visible: root.status-message != "";
-            wrap: word-wrap;
+            AppButton {
+                text: "Save Settings";
+                primary: true;
+                min-side: 120px;
+                clicked => { root.save(); }
+            }
         }
     }
 }
 
 export component TweakEditor inherits Window {
-    width: 500px;
-    height: 440px;
+    preferred-width: 520px;
+    preferred-height: 520px;
+    min-width: 440px;
+    min-height: 420px;
     title: "Tweak Options";
+    background: Palette.background;
+    default-font-size: 13px;
 
     in property <string> tweak-name;
     in-out property <[string]> blacklisted-apps;
@@ -278,46 +645,108 @@ export component TweakEditor inherits Window {
     callback save();
     callback cancel();
 
-    VerticalBox {
-        padding: 16px;
-        spacing: 8px;
+    VerticalLayout {
+        padding: 20px;
+        spacing: 16px;
 
         Text {
             text: root.tweak-name + " Options";
+            font-size: 18px;
             font-weight: 700;
-            font-size: 16px;
-        }
-        Rectangle {
-            height: 1px;
-            background: #e8e8ed;
-            horizontal-stretch: 1;
+            color: Palette.foreground;
+            wrap: word-wrap;
         }
 
-        Text {
-            text: "Blacklisted Applications";
-            font-weight: 600;
-        }
-
-        ScrollView {
+        VerticalLayout {
+            spacing: 6px;
             vertical-stretch: 1;
-            ListView {
-                for app in root.blacklisted-apps: HorizontalLayout {
-                    spacing: 8px;
-                    padding-top: 4px;
-                    padding-bottom: 4px;
 
-                    Text {
-                        text: app;
-                        vertical-alignment: center;
+            SectionLabel { text: "Blacklisted applications"; }
+
+            SurfaceCard {
+                vertical-stretch: 1;
+                gap: 4px;
+
+                if root.blacklisted-apps.length == 0: EmptyHint {
+                    text: "No blacklisted applications.";
+                }
+
+                if root.blacklisted-apps.length > 0: ListView {
+                    vertical-stretch: 1;
+                    for app in root.blacklisted-apps: ChipRow {
+                        label: app;
+                        remove => { root.remove-blacklisted(app); }
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: center;
+                    vertical-stretch: 0;
+
+                    i-bl-input := LineEdit {
+                        placeholder-text: "Executable name";
                         horizontal-stretch: 1;
-                        wrap: word-wrap;
+                        accepted => {
+                            root.add-blacklisted(self.text);
+                            self.text = "";
+                        }
                     }
 
-                    Button {
-                        text: "-";
-                        min-width: 40px;
+                    AppButton {
+                        text: "Add";
+                        min-side: 64px;
                         clicked => {
-                            root.remove-blacklisted(app);
+                            root.add-blacklisted(i-bl-input.text);
+                            i-bl-input.text = "";
+                        }
+                    }
+                }
+            }
+        }
+
+        VerticalLayout {
+            spacing: 6px;
+            vertical-stretch: 1;
+
+            SectionLabel { text: "Framework dependencies"; }
+
+            SurfaceCard {
+                vertical-stretch: 1;
+                gap: 4px;
+
+                if root.framework-deps.length == 0: EmptyHint {
+                    text: "No framework dependencies.";
+                }
+
+                if root.framework-deps.length > 0: ListView {
+                    vertical-stretch: 1;
+                    for dep in root.framework-deps: ChipRow {
+                        label: dep;
+                        remove => { root.remove-framework-dep(dep); }
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: center;
+                    vertical-stretch: 0;
+
+                    i-fw-input := LineEdit {
+                        placeholder-text: "Framework name";
+                        horizontal-stretch: 1;
+                        accepted => {
+                            root.add-framework-dep(self.text);
+                            self.text = "";
+                        }
+                    }
+
+                    AppButton {
+                        text: "Add";
+                        min-side: 64px;
+                        clicked => {
+                            root.add-framework-dep(i-fw-input.text);
+                            i-fw-input.text = "";
                         }
                     }
                 }
@@ -326,97 +755,21 @@ export component TweakEditor inherits Window {
 
         HorizontalLayout {
             spacing: 8px;
-            i-bl-input := LineEdit {
-                placeholder-text: "Executable Name";
-                horizontal-stretch: 1;
-                accepted => {
-                    root.add-blacklisted(self.text);
-                    self.text = "";
-                }
-            }
+            vertical-stretch: 0;
 
-            Button {
-                text: "+ Add";
-                min-width: 72px;
-                clicked => {
-                    root.add-blacklisted(i-bl-input.text);
-                    i-bl-input.text = "";
-                }
-            }
-        }
+            Rectangle { horizontal-stretch: 1; background: transparent; }
 
-        Text {
-            text: "Framework Dependencies";
-            font-weight: 600;
-        }
-
-        ScrollView {
-            vertical-stretch: 1;
-            ListView {
-                for dep in root.framework-deps: HorizontalLayout {
-                    spacing: 8px;
-                    padding-top: 4px;
-                    padding-bottom: 4px;
-
-                    Text {
-                        text: dep;
-                        vertical-alignment: center;
-                        horizontal-stretch: 1;
-                        wrap: word-wrap;
-                    }
-
-                    Button {
-                        text: "-";
-                        min-width: 40px;
-                        clicked => {
-                            root.remove-framework-dep(dep);
-                        }
-                    }
-                }
-            }
-        }
-
-        HorizontalLayout {
-            spacing: 8px;
-            i-fw-input := LineEdit {
-                placeholder-text: "Framework name...";
-                horizontal-stretch: 1;
-                accepted => {
-                    root.add-framework-dep(self.text);
-                    self.text = "";
-                }
-            }
-
-            Button {
-                text: "+ Add";
-                min-width: 72px;
-                clicked => {
-                    root.add-framework-dep(i-fw-input.text);
-                    i-fw-input.text = "";
-                }
-            }
-        }
-
-        HorizontalLayout {
-            spacing: 8px;
-            HorizontalLayout {
-                horizontal-stretch: 1;
-            }
-
-            Button {
-                text: "Save";
-                min-width: 80px;
-                clicked => {
-                    root.save();
-                }
-            }
-
-            Button {
+            AppButton {
                 text: "Cancel";
-                min-width: 80px;
-                clicked => {
-                    root.cancel();
-                }
+                min-side: 80px;
+                clicked => { root.cancel(); }
+            }
+
+            AppButton {
+                text: "Save";
+                primary: true;
+                min-side: 80px;
+                clicked => { root.save(); }
             }
         }
     }
