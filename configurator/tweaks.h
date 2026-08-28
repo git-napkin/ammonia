@@ -22,11 +22,10 @@ bool saveTweakOptions(const std::string& name, const TweakOptions& opts);
 bool ensurePermissions();
 
 enum class SipStatus {
-    Enabled,
-    Disabled,
-    PartiallyDisabled,
-    Unknown
+    Unknown = 0,
+    Enabled = 1,
+    Disabled = 2,
+    PartiallyDisabled = 3,
 };
 
 SipStatus checkSipStatus();
-std::string sipStatusToString(SipStatus status);

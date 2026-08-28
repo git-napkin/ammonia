@@ -4,30 +4,35 @@ set -e
 
 FRIDA_VERSION=17.9.11
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
+CACHE_DIR="$PROJECT_DIR/.frida-cache/$FRIDA_VERSION"
+
+mkdir -p "$CACHE_DIR"
+
+download() {
+    local name="$1"
+    local url="$2"
+    if [ -f "$CACHE_DIR/$name" ]; then
+        echo "$name already cached, skipping download..."
+    else
+        echo "Downloading $name..."
+        curl -fL --output "$CACHE_DIR/$name" "$url"
+    fi
+}
+
+download frida-gum-arm64e.xz \
+    "https://github.com/frida/frida/releases/download/$FRIDA_VERSION/frida-gum-devkit-$FRIDA_VERSION-macos-arm64e.tar.xz"
+download frida-gum-arm64.xz \
+    "https://github.com/frida/frida/releases/download/$FRIDA_VERSION/frida-gum-devkit-$FRIDA_VERSION-macos-arm64.tar.xz"
 
 WORKDIR="$(mktemp -d)"
 trap 'rm -rf "$WORKDIR"' EXIT
 cd "$WORKDIR"
 
-if [ -f "frida-gum-arm64e.xz" ]; then
-    echo "frida-gum-arm64e.xz already exists, skipping..."
-else
-    echo "Downloading frida-gum-arm64e.xz..."
-    curl -fL --output frida-gum-arm64e.xz "https://github.com/frida/frida/releases/download/$FRIDA_VERSION/frida-gum-devkit-$FRIDA_VERSION-macos-arm64e.tar.xz"
-fi
-
-if [ -f "frida-gum-arm64.xz" ]; then
-    echo "frida-gum-arm64.xz already exists, skipping..."
-else
-    echo "Downloading frida-gum-arm64.xz..."
-    curl -fL --output frida-gum-arm64.xz "https://github.com/frida/frida/releases/download/$FRIDA_VERSION/frida-gum-devkit-$FRIDA_VERSION-macos-arm64.tar.xz"
-fi
-
-tar xf frida-gum-arm64e.xz libfrida-gum.a frida-gum.h
+tar xf "$CACHE_DIR/frida-gum-arm64e.xz" libfrida-gum.a frida-gum.h
 mv libfrida-gum.a libfrida-gum-arm64e.a
 cp frida-gum.h "$PROJECT_DIR/syphon/frida-gum.h"
 
-tar xf frida-gum-arm64.xz libfrida-gum.a
+tar xf "$CACHE_DIR/frida-gum-arm64.xz" libfrida-gum.a
 mv libfrida-gum.a libfrida-gum-arm64.a
 
 if ! test -f "libfrida-gum-arm64e.a" || ! test -f "libfrida-gum-arm64.a"; then

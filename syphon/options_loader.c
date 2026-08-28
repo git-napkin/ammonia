@@ -1,17 +1,20 @@
 #include "options_loader.h"
 #include "tweak_utils.h"
 #include <CoreFoundation/CoreFoundation.h>
-#include <dirent.h>
-#include <stdio.h>
-#include <stdlib.h>
+#include <dispatch/dispatch.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <string.h>
+#include <syslog.h>
 #include <unistd.h>
 
+#define OPTIONS_PATH "/opt/pluginplayground/current.options"
+
 FangsOptions fangs_load_options(void) {
-    FangsOptions opts = {false, false, false, NULL, 0};
-    CFDictionaryRef dict = fangs_read_plist_dictionary(
-        "/opt/pluginplayground/current.options");
-    if (!dict) return opts;
+    FangsOptions opts = {false, false, false};
+    CFDictionaryRef dict = fangs_read_plist_dictionary(OPTIONS_PATH);
+    if (!dict)
+        return opts;
 
     CFBooleanRef val;
     val = (CFBooleanRef)CFDictionaryGetValue(dict, CFSTR("disablePAC"));
@@ -26,27 +29,62 @@ FangsOptions fangs_load_options(void) {
     if (val && CFGetTypeID(val) == CFBooleanGetTypeID())
         opts.pauseInjection = (bool)CFBooleanGetValue(val);
 
-    CFArrayRef enabledArr = (CFArrayRef)CFDictionaryGetValue(dict, CFSTR("enabledTweaks"));
-    if (enabledArr && CFGetTypeID(enabledArr) == CFArrayGetTypeID()) {
-        CFIndex count = CFArrayGetCount(enabledArr);
-        for (CFIndex i = 0; i < count; i++) {
-            CFStringRef s = (CFStringRef)CFArrayGetValueAtIndex(enabledArr, i);
-            if (s && CFGetTypeID(s) == CFStringGetTypeID()) {
-                char name[PATH_MAX];
-                if (CFStringGetCString(s, name, sizeof(name), kCFStringEncodingUTF8)) {
-                    char **tmp = realloc(opts.enabledTweaks,
-                        (size_t)(opts.enabledTweakCount + 1) * sizeof(char *));
-                    if (tmp) {
-                        opts.enabledTweaks = tmp;
-                        opts.enabledTweaks[opts.enabledTweakCount] = strdup(name);
-                        if (opts.enabledTweaks[opts.enabledTweakCount])
-                            opts.enabledTweakCount++;
-                    }
-                }
-            }
-        }
-    }
-
     CFRelease(dict);
     return opts;
+}
+
+static void (*g_watch_cb)(void);
+static dispatch_source_t g_watcher;
+
+static void watch_start(void);
+
+static void watch_retry(void) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC),
+                   dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0),
+                   ^{ watch_start(); });
+}
+
+static void watch_start(void) {
+    if (g_watcher) {
+        dispatch_source_cancel(g_watcher);
+        g_watcher = NULL;
+    }
+
+    int fd = open(OPTIONS_PATH, O_EVTONLY);
+    if (fd < 0) {
+        syslog(LOG_WARNING, "options: cannot watch %s: %s", OPTIONS_PATH,
+               strerror(errno));
+        watch_retry();
+        return;
+    }
+
+    dispatch_source_t source = dispatch_source_create(
+        DISPATCH_SOURCE_TYPE_VNODE, (uintptr_t)fd,
+        DISPATCH_VNODE_WRITE | DISPATCH_VNODE_EXTEND | DISPATCH_VNODE_DELETE |
+            DISPATCH_VNODE_RENAME | DISPATCH_VNODE_ATTRIB,
+        dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0));
+    if (!source) {
+        close(fd);
+        watch_retry();
+        return;
+    }
+
+    dispatch_source_set_event_handler(source, ^{
+      unsigned long flags = dispatch_source_get_data(source);
+      if (g_watch_cb)
+          g_watch_cb();
+      if (flags & (DISPATCH_VNODE_DELETE | DISPATCH_VNODE_RENAME)) {
+          dispatch_source_cancel(source);
+          g_watcher = NULL;
+          watch_start();
+      }
+    });
+    dispatch_source_set_cancel_handler(source, ^{ close(fd); });
+    dispatch_resume(source);
+    g_watcher = source;
+}
+
+void fangs_watch_options(void (*on_change)(void)) {
+    g_watch_cb = on_change;
+    watch_start();
 }

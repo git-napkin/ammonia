@@ -1,10 +1,10 @@
 #include "tweak_utils.h"
-#include <CoreFoundation/CoreFoundation.h>
+#include "options_loader.h"
 #include <dirent.h>
 #include <dispatch/dispatch.h>
 #include <dlfcn.h>
 #include <errno.h>
-#include <fcntl.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -15,15 +15,18 @@
 
 #define SUPPORT_PATH "/opt/pluginplayground/"
 #define TWEAKS_DIR SUPPORT_PATH "tweaks/"
+#define LEGACY_TWEAKS_DIR "/private/var/ammonia/core/tweaks/"
 #define FRIDAGUM_DYLIB SUPPORT_PATH "lib/fridagum.dylib"
 
 static void *g_interceptor = NULL;
 static const char *tweak_base_dir = TWEAKS_DIR;
 
 static bool is_dylib_filename(const char *name) {
-    if (!name) return false;
+    if (!name)
+        return false;
     size_t len = strlen(name);
-    if (len < 6) return false;
+    if (len < 6)
+        return false;
     return strcmp(name + len - 6, ".dylib") == 0;
 }
 
@@ -77,9 +80,9 @@ static void record_loaded_module(const char *path, void *handle,
 
 static void try_load_tweak(const char *dir, const char *d_name,
                            const char *exe_path) {
-    if (!is_dylib_filename(d_name)) return;
-    if (!is_safe_filename(d_name)) {
-        syslog(LOG_ERR, "opener: rejecting path traversal: %s", d_name);
+    if (!is_dylib_filename(d_name) || !is_safe_filename(d_name)) {
+        if (is_dylib_filename(d_name))
+            syslog(LOG_ERR, "opener: rejecting path traversal: %s", d_name);
         return;
     }
 
@@ -115,7 +118,7 @@ static void try_load_tweak(const char *dir, const char *d_name,
         syslog(LOG_ERR, "opener: cannot stat %s", full_path);
         return;
     }
-    if (!is_tweak_safe(full_path)) {
+    if (!is_tweak_stat_safe(&st)) {
         syslog(LOG_ERR, "opener: rejecting %s - unsafe permissions",
                full_path);
         return;
@@ -147,7 +150,7 @@ static void try_load_tweak(const char *dir, const char *d_name,
     syslog(LOG_INFO, "opener: loaded %s", d_name);
 }
 
-static void scan_tweaks(const char *subdir) {
+static void scan_tweaks(void) {
     clear_tweak_enabled_cache();
 
     char *exe_path = get_exe_path();
@@ -156,14 +159,10 @@ static void scan_tweaks(const char *subdir) {
         return;
     }
 
-    char dir_path[PATH_MAX];
-    snprintf(dir_path, sizeof(dir_path), "%s%s", tweak_base_dir,
-             subdir ? subdir : "");
-
-    DIR *dr = opendir(dir_path);
+    DIR *dr = opendir(tweak_base_dir);
     if (!dr) {
         if (errno != ENOENT)
-            syslog(LOG_ERR, "opener: opendir(%s): %s", dir_path,
+            syslog(LOG_ERR, "opener: opendir(%s): %s", tweak_base_dir,
                    strerror(errno));
         free(exe_path);
         return;
@@ -171,14 +170,27 @@ static void scan_tweaks(const char *subdir) {
 
     struct dirent *en;
     while ((en = readdir(dr)) != NULL) {
-        if (en->d_type != DT_REG && en->d_type != DT_UNKNOWN) continue;
-        try_load_tweak(dir_path, en->d_name, exe_path);
+        if (en->d_type != DT_REG && en->d_type != DT_UNKNOWN)
+            continue;
+        try_load_tweak(tweak_base_dir, en->d_name, exe_path);
     }
     closedir(dr);
     free(exe_path);
 }
 
+static void apply_options(void) {
+    FangsOptions opts = fangs_load_options();
+    tweak_base_dir = opts.useLegacyAmmonia ? LEGACY_TWEAKS_DIR : TWEAKS_DIR;
+}
+
+static void on_options_changed(void) {
+    syslog(LOG_INFO, "opener: options changed, reloading tweaks");
+    apply_options();
+    scan_tweaks();
+}
+
 static void setup_reload_handler(void) {
+    signal(SIGUSR1, SIG_IGN);
     dispatch_source_t source = dispatch_source_create(
         DISPATCH_SOURCE_TYPE_SIGNAL, SIGUSR1, 0,
         dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0));
@@ -188,39 +200,8 @@ static void setup_reload_handler(void) {
     }
     dispatch_source_set_event_handler(source, ^{
       syslog(LOG_INFO, "opener: reloading tweaks");
-      scan_tweaks(NULL);
+      scan_tweaks();
     });
-    dispatch_resume(source);
-}
-
-static void setup_options_watcher(void) {
-    int fd = open("/opt/pluginplayground/current.options", O_EVTONLY);
-    if (fd < 0) {
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC),
-                       dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0),
-                       ^{ setup_options_watcher(); });
-        return;
-    }
-
-    dispatch_source_t source = dispatch_source_create(
-        DISPATCH_SOURCE_TYPE_VNODE, fd,
-        DISPATCH_VNODE_WRITE | DISPATCH_VNODE_EXTEND,
-        dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0));
-    if (!source) {
-        close(fd);
-        return;
-    }
-
-    dispatch_source_set_event_handler(source, ^{
-      syslog(LOG_INFO, "opener: options changed, reloading tweaks");
-      clear_tweak_enabled_cache();
-      scan_tweaks(NULL);
-    });
-
-    dispatch_source_set_cancel_handler(source, ^{
-      close(fd);
-    });
-
     dispatch_resume(source);
 }
 
@@ -252,7 +233,8 @@ __attribute__((constructor)) static void opener_init(void) {
 
     syslog(LOG_INFO, "opener: initializing for pid %d", getpid());
 
-    scan_tweaks(NULL);
+    apply_options();
+    scan_tweaks();
     setup_reload_handler();
-    setup_options_watcher();
+    fangs_watch_options(on_options_changed);
 }

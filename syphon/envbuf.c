@@ -1,5 +1,4 @@
 #include "envbuf.h"
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -42,20 +41,12 @@ void envbuf_free(char *envp[]) {
 }
 
 int envbuf_find(const char *envp[], const char *name) {
-    if (envp) {
-        size_t nameLen = strlen(name);
-        int k = 0;
-        const char *env = envp[k++];
-        while (env != NULL) {
-            size_t envLen = strlen(env);
-            if (envLen > nameLen) {
-                if (!strncmp(env, name, nameLen)) {
-                    if (env[nameLen] == '=')
-                        return k - 1;
-                }
-            }
-            env = envp[k++];
-        }
+    if (!envp || !name)
+        return -1;
+    size_t nameLen = strlen(name);
+    for (int k = 0; envp[k] != NULL; k++) {
+        if (strncmp(envp[k], name, nameLen) == 0 && envp[k][nameLen] == '=')
+            return k;
     }
     return -1;
 }
@@ -79,10 +70,14 @@ char **envbuf_setenv(char **envp, const char *name, const char *value) {
             return NULL;
         envp[0] = NULL;
     }
-    char *envToSet = malloc(strlen(name) + strlen(value) + 2);
+    size_t nlen = strlen(name);
+    size_t vlen = strlen(value);
+    char *envToSet = malloc(nlen + vlen + 2);
     if (!envToSet)
         return envp;
-    snprintf(envToSet, strlen(name) + strlen(value) + 2, "%s=%s", name, value);
+    memcpy(envToSet, name, nlen);
+    envToSet[nlen] = '=';
+    memcpy(envToSet + nlen + 1, value, vlen + 1);
     int existingEnvIndex = envbuf_find((const char **)envp, name);
     if (existingEnvIndex >= 0) {
         free(envp[existingEnvIndex]);

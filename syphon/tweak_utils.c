@@ -51,14 +51,14 @@ bool macho_has_framework(const char *base, size_t size, const char *framework) {
         if (size < sizeof(struct mach_header_64))
             return false;
         const struct mach_header_64 *mh = (const struct mach_header_64 *)base;
-        ncmds = swap ? OSSwapBigToHostInt32(mh->ncmds) : mh->ncmds;
+        ncmds = swap32_if(mh->ncmds, swap);
         header_size = sizeof(struct mach_header_64);
         cmds = (const struct load_command *)(base + header_size);
     } else if (magic == MH_MAGIC || magic == MH_CIGAM) {
         if (size < sizeof(struct mach_header))
             return false;
         const struct mach_header *mh = (const struct mach_header *)base;
-        ncmds = swap ? OSSwapBigToHostInt32(mh->ncmds) : mh->ncmds;
+        ncmds = swap32_if(mh->ncmds, swap);
         header_size = sizeof(struct mach_header);
         cmds = (const struct load_command *)(base + header_size);
     } else {
@@ -73,9 +73,8 @@ bool macho_has_framework(const char *base, size_t size, const char *framework) {
     for (uint32_t i = 0; i < ncmds; i++) {
         if ((size_t)(end - (const char *)cursor) < sizeof(struct load_command))
             return false;
-        uint32_t cmd = swap ? OSSwapBigToHostInt32(cursor->cmd) : cursor->cmd;
-        uint32_t cmdsize = swap ? OSSwapBigToHostInt32(cursor->cmdsize)
-                                : cursor->cmdsize;
+        uint32_t cmd = swap32_if(cursor->cmd, swap);
+        uint32_t cmdsize = swap32_if(cursor->cmdsize, swap);
         if (cmdsize < sizeof(struct load_command) ||
             (size_t)(end - (const char *)cursor) < cmdsize)
             return false;
@@ -84,9 +83,7 @@ bool macho_has_framework(const char *base, size_t size, const char *framework) {
                 (const struct dylib_command *)cursor;
             if ((size_t)(end - (const char *)dc) < sizeof(struct dylib_command))
                 return false;
-            uint32_t name_offset = swap
-                                       ? OSSwapBigToHostInt32(dc->dylib.name.offset)
-                                       : dc->dylib.name.offset;
+            uint32_t name_offset = swap32_if(dc->dylib.name.offset, swap);
             if (name_offset >= cmdsize)
                 return false;
             const char *dylib_path = (const char *)cursor + name_offset;
@@ -98,36 +95,31 @@ bool macho_has_framework(const char *base, size_t size, const char *framework) {
     return false;
 }
 
-bool exe_links_to_framework(const char *exe_path, const char *framework) {
-    int fd = open(exe_path, O_RDONLY | O_NOFOLLOW);
-    if (fd < 0) return false;
+static struct {
+    char path[PATH_MAX];
+    void *map;
+    size_t size;
+} s_exe_map;
 
-    struct stat st;
-    if (fstat(fd, &st) < 0) {
-        close(fd);
-        return false;
-    }
-    if (!S_ISREG(st.st_mode)) {
-        close(fd);
-        return false;
-    }
+static void unmap_exe(void) {
+    if (s_exe_map.map && s_exe_map.map != MAP_FAILED)
+        munmap(s_exe_map.map, s_exe_map.size);
+    s_exe_map.map = NULL;
+    s_exe_map.size = 0;
+    s_exe_map.path[0] = '\0';
+}
 
-    size_t size = (size_t)st.st_size;
-    void *mapped = mmap(NULL, size, PROT_READ, MAP_PRIVATE, fd, 0);
-    close(fd);
-    if (mapped == MAP_FAILED) return false;
-
-    bool found = false;
+static bool mapped_links_to_framework(const void *mapped, size_t size,
+                                      const char *framework) {
     uint32_t magic = *(const uint32_t *)mapped;
-
     if (magic == FAT_MAGIC || magic == FAT_CIGAM) {
         if (size < sizeof(struct fat_header))
-            { munmap(mapped, size); return false; }
+            return false;
         const struct fat_header *fh = (const struct fat_header *)mapped;
         uint32_t narch = OSSwapBigToHostInt32(fh->nfat_arch);
         size_t arches_size = (size_t)narch * sizeof(struct fat_arch);
         if (size < sizeof(struct fat_header) + arches_size)
-            { munmap(mapped, size); return false; }
+            return false;
         const struct fat_arch *archs =
             (const struct fat_arch *)((const char *)mapped +
                                       sizeof(struct fat_header));
@@ -136,25 +128,48 @@ bool exe_links_to_framework(const char *exe_path, const char *framework) {
             if (offset >= size)
                 continue;
             if (macho_has_framework((const char *)mapped + offset,
-                                    size - offset, framework)) {
-                found = true;
-                break;
-            }
+                                    size - offset, framework))
+                return true;
         }
-    } else {
-        found = macho_has_framework((const char *)mapped, size, framework);
+        return false;
     }
-
-    munmap(mapped, size);
-    return found;
+    return macho_has_framework((const char *)mapped, size, framework);
 }
 
-bool check_list_match(const char *path, const char *exe) {
+bool exe_links_to_framework(const char *exe_path, const char *framework) {
+    if (!exe_path || !framework)
+        return false;
+
+    if (!s_exe_map.map || strcmp(s_exe_map.path, exe_path) != 0) {
+        unmap_exe();
+        int fd = open(exe_path, O_RDONLY | O_NOFOLLOW);
+        if (fd < 0)
+            return false;
+        struct stat st;
+        if (fstat(fd, &st) < 0 || !S_ISREG(st.st_mode)) {
+            close(fd);
+            return false;
+        }
+        size_t size = (size_t)st.st_size;
+        void *mapped = mmap(NULL, size, PROT_READ, MAP_PRIVATE, fd, 0);
+        close(fd);
+        if (mapped == MAP_FAILED)
+            return false;
+        snprintf(s_exe_map.path, sizeof(s_exe_map.path), "%s", exe_path);
+        s_exe_map.map = mapped;
+        s_exe_map.size = size;
+    }
+
+    return mapped_links_to_framework(s_exe_map.map, s_exe_map.size, framework);
+}
+
+static int list_match(const char *path, const char *exe) {
     FILE *f = fopen(path, "r");
-    if (!f) return false;
+    if (!f)
+        return -1;
 
     char line[256];
-    bool matched = false;
+    int matched = 0;
     while (fgets(line, sizeof(line), f)) {
         size_t len = strlen(line);
         while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r'))
@@ -165,7 +180,7 @@ bool check_list_match(const char *path, const char *exe) {
         if (*p == '\0' || *p == '#')
             continue;
         if (path_matches_entry(exe, p)) {
-            matched = true;
+            matched = 1;
             break;
         }
     }
@@ -173,27 +188,35 @@ bool check_list_match(const char *path, const char *exe) {
     return matched;
 }
 
+bool check_list_match(const char *path, const char *exe) {
+    return list_match(path, exe) == 1;
+}
+
+bool is_tweak_stat_safe(const struct stat *st) {
+    return st && st->st_uid == 0 && !(st->st_mode & (S_IWGRP | S_IWOTH));
+}
+
 bool is_tweak_safe(const char *full_path) {
     struct stat st;
-    if (stat(full_path, &st) != 0) return false;
-    if (st.st_uid != 0) return false;
-    if (st.st_mode & (S_IWGRP | S_IWOTH)) return false;
-    return true;
+    if (stat(full_path, &st) != 0)
+        return false;
+    return is_tweak_stat_safe(&st);
 }
 
 bool should_load_tweak(const char *dir, const char *name, const char *exe) {
-    if (!is_safe_filename(name)) return false;
+    if (!is_safe_filename(name))
+        return false;
 
     char wl[PATH_MAX], bl[PATH_MAX];
     snprintf(wl, sizeof(wl), "%s/%s.whitelist", dir, name);
     snprintf(bl, sizeof(bl), "%s/%s.blacklist", dir, name);
 
-    if (access(wl, F_OK) == 0)
-        return check_list_match(wl, exe);
-
-    if (access(bl, F_OK) == 0)
-        return !check_list_match(bl, exe);
-
+    int wl_r = list_match(wl, exe);
+    if (wl_r >= 0)
+        return wl_r == 1;
+    int bl_r = list_match(bl, exe);
+    if (bl_r >= 0)
+        return bl_r == 0;
     return true;
 }
 

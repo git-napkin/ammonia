@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <sys/stat.h>
 #include <sys/syslimits.h>
 
 bool path_ends_with(const char *path, const char *name);
@@ -14,6 +15,7 @@ bool macho_has_framework(const char *base, size_t size, const char *framework);
 bool exe_links_to_framework(const char *exe_path, const char *framework);
 bool check_dylib_options(const char *dir, const char *name, const char *exe);
 bool check_list_match(const char *path, const char *exe);
+bool is_tweak_stat_safe(const struct stat *st);
 bool is_tweak_safe(const char *full_path);
 bool should_load_tweak(const char *dir, const char *name, const char *exe);
 char *get_exe_path(void);

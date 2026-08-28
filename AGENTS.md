@@ -39,7 +39,7 @@ sh ./setup_frida.sh
 | `BUILD_CONFIGURATOR` | `ON` | GUI app. Requires Slint via FetchContent (first build downloads from GitHub). |
 | `BUILD_TESTS` | `ON` | CTest unit tests. |
 | `CODESIGN_IDENTITY` | `-` | Ad-hoc by default. Uses `Master.entitlements`. |
-| `INSTALL_PREFIX` | `/opt/pluginplayground` | Staging/install prefix. |
+| `CMAKE_INSTALL_PREFIX` | `/opt/pluginplayground` | Staging/install prefix when using `cmake --install`. |
 
 Debug builds (`-DCMAKE_BUILD_TYPE=Debug`) auto-enable AddressSanitizer and clang-tidy (if available).
 

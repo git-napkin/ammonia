@@ -93,7 +93,7 @@ component AppButton inherits Rectangle {
     border-color: root.primary ? Palette.accent-background : (touch.has-hover ? Theme.ring-hover : Theme.ring);
     background: root.primary
         ? (touch.pressed ? Palette.accent-background.darker(0.08) : (touch.has-hover ? Palette.accent-background.brighter(0.06) : Palette.accent-background))
-        : (touch.pressed ? Theme.row-hover : (touch.has-hover ? Theme.row-hover : Palette.control-background));
+        : ((touch.pressed || touch.has-hover) ? Theme.row-hover : Palette.control-background);
     drop-shadow-offset-x: 0px;
     drop-shadow-offset-y: root.primary ? Theme.lift-y : 0px;
     drop-shadow-blur: root.primary ? Theme.lift-blur : 0px;
@@ -137,7 +137,7 @@ component IconButton inherits Rectangle {
     border-radius: Theme.radius-control;
     border-width: 1px;
     border-color: touch.has-hover ? Theme.ring-hover : Theme.ring;
-    background: touch.pressed ? Theme.row-hover : (touch.has-hover ? Theme.row-hover : Palette.control-background);
+    background: (touch.pressed || touch.has-hover) ? Theme.row-hover : Palette.control-background;
     transform-scale: touch.pressed ? 0.96 : 1;
     animate transform-scale { duration: 150ms; easing: ease-out; }
     animate background, border-color { duration: 150ms; easing: ease-out; }
@@ -462,30 +462,34 @@ export component MainWindow inherits Window {
     in property <bool> dev-tools-available;
     in property <string> status-message;
     in-out property <image> default-icon: @image-url("drill.png");
-    in property <string> daemon-status;
-    in property <string> sip-status: "Unknown";
+    in property <int> daemon-kind;
+    in property <int> sip-kind;
 
     callback save();
     callback edit-tweak(string);
-    callback toggle-tweak(string);
+    callback toggle-tweak(int);
     callback package-tweak(string);
     callback install-daemon();
     callback uninstall-daemon();
 
     property <color> sip-color:
-        root.sip-status == "Enabled" ? Theme.danger
-        : (root.sip-status == "Partially Disabled (Debugging Restrictions Off)" || root.sip-status == "Disabled" ? Theme.success : Theme.warning);
+        root.sip-kind == 1 ? Theme.danger
+        : (root.sip-kind == 2 || root.sip-kind == 3 ? Theme.success : Theme.warning);
     property <string> sip-value:
-        root.sip-status == "Partially Disabled (Debugging Restrictions Off)" ? "Partially disabled"
-        : root.sip-status;
+        root.sip-kind == 1 ? "Enabled"
+        : (root.sip-kind == 2 ? "Disabled"
+        : (root.sip-kind == 3 ? "Partially disabled" : "Unknown"));
     property <string> sip-detail:
-        root.sip-status == "Enabled" ? "Injection needs SIP disabled or partially disabled."
-        : (root.sip-status == "Partially Disabled (Debugging Restrictions Off)" ? "Debugging restrictions are off — ready for injection."
-        : (root.sip-status == "Disabled" ? "SIP is off — injection can run."
+        root.sip-kind == 1 ? "Injection needs SIP disabled or partially disabled."
+        : (root.sip-kind == 3 ? "Debugging restrictions are off — ready for injection."
+        : (root.sip-kind == 2 ? "SIP is off — injection can run."
         : "Could not determine SIP status."));
+    property <string> daemon-value:
+        root.daemon-kind == 1 ? "Running"
+        : (root.daemon-kind == 2 ? "Stopped" : "Not Installed");
     property <color> daemon-color:
-        root.daemon-status == "Running" ? Theme.success
-        : (root.daemon-status == "Stopped" ? Theme.warning : Theme.danger);
+        root.daemon-kind == 1 ? Theme.success
+        : (root.daemon-kind == 2 ? Theme.warning : Theme.danger);
 
     VerticalLayout {
         padding: 20px;
@@ -551,17 +555,17 @@ export component MainWindow inherits Window {
 
             StatusCard {
                 label: "Launch daemon";
-                value: root.daemon-status;
+                value: root.daemon-value;
                 indicator: root.daemon-color;
 
-                if root.daemon-status == "Not Installed": AppButton {
+                if root.daemon-kind == 0: AppButton {
                     text: "Install";
                     primary: true;
                     min-side: 80px;
                     clicked => { root.install-daemon(); }
                 }
 
-                if root.daemon-status != "Not Installed": AppButton {
+                if root.daemon-kind != 0: AppButton {
                     text: "Uninstall";
                     min-side: 88px;
                     clicked => { root.uninstall-daemon(); }
@@ -585,13 +589,13 @@ export component MainWindow inherits Window {
 
                 if root.tweaks.length > 0: ListView {
                     vertical-stretch: 1;
-                    for tweak in root.tweaks: TweakRow {
+                    for tweak[idx] in root.tweaks: TweakRow {
                         name: tweak.name;
                         disabled: tweak.disabled;
                         icon: tweak.icon;
                         show-package: root.dev-tools-available;
                         edit => { root.edit-tweak(tweak.name); }
-                        toggle => { root.toggle-tweak(tweak.name); }
+                        toggle => { root.toggle-tweak(idx); }
                         package => { root.package-tweak(tweak.name); }
                     }
                 }

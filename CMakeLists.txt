@@ -13,7 +13,9 @@ else()
 endif()
 
 set(CODESIGN_IDENTITY "-" CACHE STRING "Codesign identity (default: ad-hoc)")
-set(INSTALL_PREFIX "/opt/pluginplayground" CACHE PATH "Installation prefix")
+if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
+  set(CMAKE_INSTALL_PREFIX "/opt/pluginplayground" CACHE PATH "Installation prefix" FORCE)
+endif()
 
 # ── Sanitisers (debug builds) ──────────────────────────────────────────────
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
@@ -46,7 +48,9 @@ endfunction()
 add_library(syphon_obj OBJECT
     syphon/envbuf.c
     syphon/tweak_utils.c
+    syphon/options_loader.c
 )
+set_target_properties(syphon_obj PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 set(SYPHON_INCLUDE_PRIVATE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/syphon>
@@ -61,7 +65,6 @@ add_library(fangs_hook SHARED
     syphon/exe.c
     syphon/pac_utils.c
     syphon/bundle_copy.c
-    syphon/options_loader.c
     $<TARGET_OBJECTS:syphon_obj>
 )
 target_include_directories(fangs_hook PRIVATE ${SYPHON_INCLUDE_PRIVATE})
@@ -77,7 +80,6 @@ add_library(playground_opener SHARED
 )
 target_include_directories(playground_opener PRIVATE ${SYPHON_INCLUDE_PRIVATE})
 target_link_libraries(playground_opener PRIVATE
-    "-framework Foundation"
     "-framework CoreFoundation"
 )
 

@@ -1,52 +1,17 @@
 #include "dmanager.h"
-#include <spawn.h>
-#include <sys/wait.h>
-#include <unistd.h>
+#include "process_utils.h"
 #include <cstdio>
-#include <cstdlib>
+#include <unistd.h>
 
-std::string daemonStatusString(DaemonStatus s) {
-    switch (s) {
-        case DaemonStatus::NotInstalled: return "Not Installed";
-        case DaemonStatus::InstalledRunning: return "Running";
-        case DaemonStatus::InstalledStopped: return "Stopped";
-    }
-    return "Unknown";
-}
-
-std::string DaemonManager::plistPath() {
-    return "/Library/LaunchDaemons/com.pluginplayground.grant.plist";
-}
-
-static bool runCommand(const char *cmd, const char *const argv[]) {
-    pid_t pid;
-    int r = posix_spawn(&pid, cmd, nullptr, nullptr,
-                        (char *const *)argv, nullptr);
-    if (r != 0) return false;
-    int status;
-    waitpid(pid, &status, 0);
-    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
-}
-
-static bool runPrivilegedScript(const char *script) {
-    pid_t pid;
-    const char *args[] = {"/usr/bin/osascript", "-e", script, nullptr};
-    int r = posix_spawn(&pid, "/usr/bin/osascript", nullptr, nullptr,
-                        (char *const *)args, nullptr);
-    if (r != 0) return false;
-    int status;
-    waitpid(pid, &status, 0);
-    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
-}
+static const char kPlistPath[] = "/Library/LaunchDaemons/com.pluginplayground.grant.plist";
 
 DaemonStatus DaemonManager::status() {
-    std::string path = plistPath();
-    if (access(path.c_str(), F_OK) != 0)
+    if (access(kPlistPath, F_OK) != 0)
         return DaemonStatus::NotInstalled;
 
     const char *args[] = {
         "/bin/launchctl", "print", "system/com.pluginplayground.grant", nullptr};
-    if (runCommand("/bin/launchctl", args))
+    if (runArgv("/bin/launchctl", args))
         return DaemonStatus::InstalledRunning;
     return DaemonStatus::InstalledStopped;
 }
@@ -76,11 +41,12 @@ bool DaemonManager::install() {
         "</plist>\n";
 
     FILE *f = fopen("/tmp/com.pluginplayground.grant.plist", "w");
-    if (!f) return false;
+    if (!f)
+        return false;
     fputs(plist, f);
     fclose(f);
 
-    std::string script =
+    bool ok = runPrivilegedScript(
         "do shell script \""
         "mkdir -p /var/log/pluginplayground && "
         "cp /tmp/com.pluginplayground.grant.plist "
@@ -88,19 +54,15 @@ bool DaemonManager::install() {
         "chown root:wheel /Library/LaunchDaemons/com.pluginplayground.grant.plist && "
         "chmod 644 /Library/LaunchDaemons/com.pluginplayground.grant.plist && "
         "launchctl load /Library/LaunchDaemons/com.pluginplayground.grant.plist"
-        "\" with administrator privileges";
-
-    bool ok = runPrivilegedScript(script.c_str());
+        "\" with administrator privileges");
     remove("/tmp/com.pluginplayground.grant.plist");
     return ok;
 }
 
 bool DaemonManager::uninstall() {
-    std::string script =
+    return runPrivilegedScript(
         "do shell script \""
         "launchctl unload /Library/LaunchDaemons/com.pluginplayground.grant.plist 2>/dev/null; "
         "rm -f /Library/LaunchDaemons/com.pluginplayground.grant.plist"
-        "\" with administrator privileges";
-
-    return runPrivilegedScript(script.c_str());
+        "\" with administrator privileges");
 }

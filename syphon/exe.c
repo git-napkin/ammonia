@@ -3,6 +3,7 @@
 #include "pac_utils.h"
 #include "log.h"
 #include <errno.h>
+#include <removefile.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -21,9 +22,14 @@ static char *find_bundle_ext(char *path) {
     return last;
 }
 
+static bool timespec_newer(const struct timespec *a, const struct timespec *b) {
+    return a->tv_sec > b->tv_sec ||
+           (a->tv_sec == b->tv_sec && a->tv_nsec > b->tv_nsec);
+}
+
 char *getready_process(const char *path) {
     if (!path_is_bundle(path))
-        return strdup(path);
+        return NULL;
 
     char bundle_root[PATH_MAX];
     snprintf(bundle_root, sizeof(bundle_root), "%s", path);
@@ -37,33 +43,47 @@ char *getready_process(const char *path) {
     char runtime_apps_dir[PATH_MAX];
     char dst_bundle_path[PATH_MAX];
     snprintf(runtime_apps_dir, sizeof(runtime_apps_dir), "/tmp/RuntimeApplications");
-    snprintf(dst_bundle_path, sizeof(dst_bundle_path), "%s/%s", runtime_apps_dir, bundle_name);
+    snprintf(dst_bundle_path, sizeof(dst_bundle_path), "%s/%s", runtime_apps_dir,
+             bundle_name);
 
     log_info("[bootstrap] processing bundle: %s", bundle_root);
 
-    struct stat st;
-    if (stat(dst_bundle_path, &st) == 0 && S_ISDIR(st.st_mode)) {
+    struct stat src_st, dst_st;
+    bool have_dst = stat(dst_bundle_path, &dst_st) == 0 && S_ISDIR(dst_st.st_mode);
+    bool src_newer = have_dst && stat(bundle_root, &src_st) == 0 &&
+                     timespec_newer(&src_st.st_mtimespec, &dst_st.st_mtimespec);
+
+    if (have_dst && !src_newer) {
         char bundle_exec_tmp[PATH_MAX];
         log_info("[bootstrap] bundle already exists at: %s", dst_bundle_path);
-        if (get_bundle_executable_path(dst_bundle_path, bundle_exec_tmp, sizeof(bundle_exec_tmp)))
+        if (get_bundle_executable_path(dst_bundle_path, bundle_exec_tmp,
+                                       sizeof(bundle_exec_tmp)))
             return strdup(bundle_exec_tmp);
     }
 
+    if (have_dst) {
+        log_info("[bootstrap] replacing cached bundle: %s", dst_bundle_path);
+        removefile(dst_bundle_path, NULL, REMOVEFILE_RECURSIVE);
+    }
+
     if (mkdir(runtime_apps_dir, 0755) != 0 && errno != EEXIST) {
-        log_error("[bootstrap] failed to create RuntimeApplications dir: %s", strerror(errno));
-        return strdup(path);
+        log_error("[bootstrap] failed to create RuntimeApplications dir: %s",
+                  strerror(errno));
+        return NULL;
     }
 
     log_info("[bootstrap] copying bundle to: %s", dst_bundle_path);
     if (!copy_dir_recursive(bundle_root, dst_bundle_path)) {
         log_error("[bootstrap] failed to copy bundle to: %s", dst_bundle_path);
-        return strdup(path);
+        return NULL;
     }
 
     char bundle_exec_tmp[PATH_MAX];
-    if (!get_bundle_executable_path(dst_bundle_path, bundle_exec_tmp, sizeof(bundle_exec_tmp))) {
-        log_error("[bootstrap] failed to get executable path for: %s", dst_bundle_path);
-        return strdup(path);
+    if (!get_bundle_executable_path(dst_bundle_path, bundle_exec_tmp,
+                                    sizeof(bundle_exec_tmp))) {
+        log_error("[bootstrap] failed to get executable path for: %s",
+                  dst_bundle_path);
+        return NULL;
     }
 
     log_info("[bootstrap] depacifying executable: %s", bundle_exec_tmp);

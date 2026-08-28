@@ -10,13 +10,12 @@
 #include <mach-o/fat.h>
 #include <mach-o/loader.h>
 #include <spawn.h>
-#include <stdarg.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/syslimits.h>
 #include <syslog.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #include <dispatch/dispatch.h>
 #include <os/lock.h>
@@ -53,17 +52,11 @@ static os_unfair_lock g_fangs_opts_lock = OS_UNFAIR_LOCK_INIT;
 
 
 static void load_ammonia_blacklist(void) {
-    char pathbuf[PATH_MAX];
-    if (snprintf(pathbuf, sizeof(pathbuf), "%s", BLACKLIST_PATH) >=
-        (int)sizeof(pathbuf)) {
-        syslog(LOG_ERR, "fangs_hook: blacklist path overflow");
-        return;
-    }
-    FILE *f = fopen(pathbuf, "r");
+    FILE *f = fopen(BLACKLIST_PATH, "r");
     if (!f) {
         if (errno != ENOENT)
             syslog(LOG_ERR, "fangs_hook: failed to open blacklist '%s': %s",
-                   pathbuf, strerror(errno));
+                   BLACKLIST_PATH, strerror(errno));
         return;
     }
     char *line = NULL;
@@ -97,7 +90,7 @@ static void load_ammonia_blacklist(void) {
     }
     if (ferror(f))
         syslog(LOG_ERR, "fangs_hook: error reading blacklist '%s': %s",
-               pathbuf, strerror(errno));
+               BLACKLIST_PATH, strerror(errno));
     free(line);
     fclose(f);
 }
@@ -151,8 +144,17 @@ static bool macho64_has_sea_blob(int fd) {
     return false;
 }
 
-static bool is_node_sea_binary(const char *path) {
-    if (!path) return false;
+#define SEA_CACHE_SIZE 16
+static struct {
+    dev_t dev;
+    ino_t ino;
+    struct timespec mtime;
+    bool result;
+    bool used;
+} sea_cache[SEA_CACHE_SIZE];
+static unsigned sea_cache_next;
+
+static bool is_node_sea_binary_uncached(const char *path) {
     int fd = open(path, O_RDONLY);
     if (fd < 0) return false;
     uint32_t magic;
@@ -181,43 +183,36 @@ static bool is_node_sea_binary(const char *path) {
     return result;
 }
 
+static bool is_node_sea_binary(const char *path) {
+    if (!path)
+        return false;
+    struct stat st;
+    if (stat(path, &st) != 0)
+        return false;
+    for (unsigned i = 0; i < SEA_CACHE_SIZE; i++) {
+        if (sea_cache[i].used && sea_cache[i].dev == st.st_dev &&
+            sea_cache[i].ino == st.st_ino &&
+            sea_cache[i].mtime.tv_sec == st.st_mtimespec.tv_sec &&
+            sea_cache[i].mtime.tv_nsec == st.st_mtimespec.tv_nsec)
+            return sea_cache[i].result;
+    }
+    bool result = is_node_sea_binary_uncached(path);
+    unsigned slot = sea_cache_next++ % SEA_CACHE_SIZE;
+    sea_cache[slot].dev = st.st_dev;
+    sea_cache[slot].ino = st.st_ino;
+    sea_cache[slot].mtime = st.st_mtimespec;
+    sea_cache[slot].result = result;
+    sea_cache[slot].used = true;
+    return result;
+}
+
 static void reload_options(void) {
     FangsOptions new_opts = fangs_load_options();
     os_unfair_lock_lock(&g_fangs_opts_lock);
-    for (int i = 0; i < g_fangs_opts.enabledTweakCount; i++)
-        free(g_fangs_opts.enabledTweaks[i]);
-    free(g_fangs_opts.enabledTweaks);
     g_fangs_opts = new_opts;
     os_unfair_lock_unlock(&g_fangs_opts_lock);
-    syslog(LOG_INFO, "fangs_hook: options reloaded: disablePAC=%d",
-           new_opts.disablePAC);
-}
-
-static void setup_options_watcher(void) {
-    int fd = open("/opt/pluginplayground/current.options", O_EVTONLY);
-    if (fd < 0) {
-        syslog(LOG_WARNING,
-               "fangs_hook: cannot watch current.options: %s",
-               strerror(errno));
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC),
-                       dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0),
-                       ^{ setup_options_watcher(); });
-        return;
-    }
-
-    static dispatch_source_t watcher;
-    watcher = dispatch_source_create(
-        DISPATCH_SOURCE_TYPE_VNODE, fd,
-        DISPATCH_VNODE_WRITE | DISPATCH_VNODE_EXTEND,
-        dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0));
-    if (!watcher) {
-        close(fd);
-        return;
-    }
-
-    dispatch_source_set_event_handler(watcher, ^{ reload_options(); });
-    dispatch_source_set_cancel_handler(watcher, ^{ close(fd); });
-    dispatch_resume(watcher);
+    syslog(LOG_INFO, "fangs_hook: options reloaded: disablePAC=%d pause=%d",
+           new_opts.disablePAC, new_opts.pauseInjection);
 }
 
 static int spawn_with_env(int (*spawn_fn)(pid_t *, const char *,
@@ -286,12 +281,14 @@ static int spawn_with_env(int (*spawn_fn)(pid_t *, const char *,
             if (idx >= 0) {
                 const char *old =
                     playground[idx] + strlen("DYLD_INSERT_LIBRARIES=");
-                char *combined = NULL;
-                if (asprintf(&combined, "%s:%s", old, OPENER_DYLIB) != -1) {
-                    playground = envbuf_setenv(playground,
-                                               "DYLD_INSERT_LIBRARIES",
-                                               combined);
-                    free(combined);
+                if (!strstr(old, OPENER_DYLIB)) {
+                    char *combined = NULL;
+                    if (asprintf(&combined, "%s:%s", old, OPENER_DYLIB) != -1) {
+                        playground = envbuf_setenv(playground,
+                                                   "DYLD_INSERT_LIBRARIES",
+                                                   combined);
+                        free(combined);
+                    }
                 }
             } else {
                 playground = envbuf_setenv(playground, "DYLD_INSERT_LIBRARIES",
@@ -429,6 +426,6 @@ __attribute__((constructor)) static void fangs_hook_init(void) {
 
     gum_interceptor_end_transaction(interceptor);
 
-    setup_options_watcher();
+    fangs_watch_options(reload_options);
     syslog(LOG_INFO, "fangs_hook: initialized");
 }

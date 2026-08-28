@@ -10,7 +10,8 @@ compile_commands.json
 # Testing tweak build artifact (built via make -C testing/)
 testing/testing.dylib
 
-# Frida-Gum build artifacts (downloaded by setup_frida.sh)
+# Frida-Gum download cache + build artifacts (setup_frida.sh)
+.frida-cache/
 libfrida-gum-arm64e-arm64.a
 fridagum.dylib
 syphon/frida-gum.h
