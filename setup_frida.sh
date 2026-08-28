@@ -53,6 +53,8 @@ cp libfrida-gum-arm64e-arm64.a "$PROJECT_DIR"
 
 clang -arch arm64e -arch arm64 -lresolv -fpic -shared -Wl,-all_load libfrida-gum-arm64e-arm64.a -o fridagum.dylib
 
+codesign -f -s - fridagum.dylib
+
 cp fridagum.dylib "$PROJECT_DIR"
 
 echo "Done. Built: libfrida-gum-arm64e-arm64.a, fridagum.dylib"

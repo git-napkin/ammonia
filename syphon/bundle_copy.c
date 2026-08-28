@@ -44,8 +44,16 @@ bool get_bundle_executable_path(const char *bundle_path, char *exec_path, size_t
 }
 
 bool copy_dir_recursive(const char *src_path, const char *dst_path) {
-    if (copyfile(src_path, dst_path, NULL,
-                 COPYFILE_ALL | COPYFILE_RECURSIVE) != 0) {
+    copyfile_flags_t flags = COPYFILE_ALL | COPYFILE_RECURSIVE;
+#ifdef COPYFILE_CLONE
+    flags |= COPYFILE_CLONE;
+#endif
+    if (copyfile(src_path, dst_path, NULL, flags) != 0) {
+#ifdef COPYFILE_CLONE
+        flags &= ~COPYFILE_CLONE;
+        if (copyfile(src_path, dst_path, NULL, flags) == 0)
+            return true;
+#endif
         log_error("[copy_dir] copyfile failed: %s -> %s (%s)", src_path,
                   dst_path, strerror(errno));
         return false;

@@ -4,6 +4,7 @@
 #include <dispatch/dispatch.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <stdatomic.h>
 #include <string.h>
 #include <syslog.h>
 #include <unistd.h>
@@ -35,6 +36,7 @@ FangsOptions fangs_load_options(void) {
 
 static void (*g_watch_cb)(void);
 static dispatch_source_t g_watcher;
+static atomic_uint_fast64_t g_watch_gen;
 
 static void watch_start(void);
 
@@ -71,8 +73,13 @@ static void watch_start(void) {
 
     dispatch_source_set_event_handler(source, ^{
       unsigned long flags = dispatch_source_get_data(source);
-      if (g_watch_cb)
-          g_watch_cb();
+      uint64_t gen = atomic_fetch_add(&g_watch_gen, 1) + 1;
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 100 * NSEC_PER_MSEC),
+                     dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0),
+                     ^{
+                       if (atomic_load(&g_watch_gen) == gen && g_watch_cb)
+                           g_watch_cb();
+                     });
       if (flags & (DISPATCH_VNODE_DELETE | DISPATCH_VNODE_RENAME)) {
           dispatch_source_cancel(source);
           g_watcher = NULL;

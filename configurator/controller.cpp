@@ -1,6 +1,6 @@
 #include "controller.h"
 #include "dmanager.h"
-#include <memory>
+#include <thread>
 #include <unistd.h>
 
 static void eraseMatching(slint::VectorModel<slint::SharedString> &model,
@@ -24,8 +24,13 @@ Controller::Controller(MainWindow &window)
     m_window.on_package_tweak([this](slint::SharedString name) {
         packageTweak(std::string(name));
     });
+    m_window.on_install_tweak([this] { installTweak(); });
     m_window.on_install_daemon([this] { installDaemon(); });
     m_window.on_uninstall_daemon([this] { uninstallDaemon(); });
+}
+
+Controller::~Controller() {
+    m_alive = false;
 }
 
 void Controller::load() {
@@ -34,10 +39,23 @@ void Controller::load() {
     m_window.set_disable_pac(opts.disablePAC);
     m_window.set_pause_injection(opts.pauseInjection);
 
-    m_window.set_dev_tools_available(hasDeveloperTools());
     refreshTweaks();
-    refreshDaemonStatus();
-    m_window.set_sip_kind(static_cast<int>(checkSipStatus()));
+    refreshProbes();
+}
+
+void Controller::refreshProbes() {
+    std::thread([this] {
+        bool tools = hasDeveloperTools();
+        auto sip = checkSipStatus();
+        auto daemon = DaemonManager::status();
+        slint::invoke_from_event_loop([this, tools, sip, daemon] {
+            if (!m_alive)
+                return;
+            m_window.set_dev_tools_available(tools);
+            m_window.set_sip_kind(static_cast<int>(sip));
+            m_window.set_daemon_kind(static_cast<int>(daemon));
+        });
+    }).detach();
 }
 
 void Controller::save() {
@@ -104,6 +122,11 @@ void Controller::openEditor(const std::string &name) {
         deps->push_back(slint::SharedString(d));
     editor->set_framework_deps(deps);
 
+    auto whitelist = std::make_shared<slint::VectorModel<slint::SharedString>>();
+    for (const auto &w : opts.processWhitelist)
+        whitelist->push_back(slint::SharedString(w));
+    editor->set_process_whitelist(whitelist);
+
     slint::ComponentWeakHandle<TweakEditor> weak(editor);
 
     editor->on_save([weak, name]() {
@@ -119,7 +142,11 @@ void Controller::openEditor(const std::string &name) {
         for (int i = 0; i < depModel->row_count(); i++)
             newOpts.frameworkDependencies.push_back(
                 std::string(*depModel->row_data(i)));
-        saveTweakOptions(name, newOpts);
+        auto wlModel = e->get_process_whitelist();
+        for (int i = 0; i < wlModel->row_count(); i++)
+            newOpts.processWhitelist.push_back(std::string(*wlModel->row_data(i)));
+        if (!saveTweakOptions(name, newOpts))
+            return;
         e->hide();
     });
 
@@ -141,6 +168,12 @@ void Controller::openEditor(const std::string &name) {
         deps->push_back(value);
     });
 
+    editor->on_add_whitelisted([weak, whitelist](slint::SharedString value) {
+        if (!weak.lock() || std::string(value).empty())
+            return;
+        whitelist->push_back(value);
+    });
+
     editor->on_remove_blacklisted([weak, apps](slint::SharedString value) {
         if (!weak.lock())
             return;
@@ -151,6 +184,12 @@ void Controller::openEditor(const std::string &name) {
         if (!weak.lock())
             return;
         eraseMatching(*deps, value);
+    });
+
+    editor->on_remove_whitelisted([weak, whitelist](slint::SharedString value) {
+        if (!weak.lock())
+            return;
+        eraseMatching(*whitelist, value);
     });
 
     editor->show();
@@ -182,6 +221,15 @@ void Controller::packageTweak(const std::string &name) {
     } else {
         m_window.set_status_message(
             slint::SharedString(("Package failed for " + name).c_str()));
+    }
+}
+
+void Controller::installTweak() {
+    if (::installTweakFromDialog()) {
+        refreshTweaks();
+        m_window.set_status_message("Tweak installed.");
+    } else {
+        m_window.set_status_message("Install canceled or failed.");
     }
 }
 

@@ -2,6 +2,8 @@
 #include "file_utils.h"
 #include "process_utils.h"
 #include <CoreFoundation/CoreFoundation.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 static const char *optionsPath() {
     return "/opt/pluginplayground/current.options";
@@ -56,7 +58,7 @@ static bool fixPermissions() {
         "do shell script \""
         "mkdir -p /opt/pluginplayground && "
         "touch /opt/pluginplayground/current.options && "
-        "chmod 644 /opt/pluginplayground/current.options"
+        "chmod 666 /opt/pluginplayground/current.options"
         "\" with administrator privileges");
 }
 
@@ -96,5 +98,7 @@ bool saveOptions(const Options &opts) {
     if (!ok && fixPermissions())
         ok = fileWrite(optionsPath(), data);
     CFRelease(data);
+    if (ok)
+        chmod(optionsPath(), 0666);
     return ok;
 }

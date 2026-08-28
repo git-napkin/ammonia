@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <string>
+#include <unistd.h>
 
 static inline std::string cfToStr(CFStringRef s) {
     if (!s)
@@ -52,11 +53,23 @@ static inline CFDataRef fileRead(const char *path) {
 }
 
 static inline bool fileWrite(const char *path, CFDataRef data) {
-    FILE *f = fopen(path, "wb");
+    std::string tmp = std::string(path) + ".tmp";
+    FILE *f = fopen(tmp.c_str(), "wb");
     if (!f)
         return false;
     auto len = (size_t)CFDataGetLength(data);
-    bool ok = fwrite(CFDataGetBytePtr(data), 1, len, f) == len;
+    const UInt8 *bytes = CFDataGetBytePtr(data);
+    bool ok = len == 0 || (bytes && fwrite(bytes, 1, len, f) == len);
+    if (ok)
+        ok = fflush(f) == 0 && fsync(fileno(f)) == 0;
     fclose(f);
-    return ok;
+    if (!ok) {
+        unlink(tmp.c_str());
+        return false;
+    }
+    if (rename(tmp.c_str(), path) != 0) {
+        unlink(tmp.c_str());
+        return false;
+    }
+    return true;
 }

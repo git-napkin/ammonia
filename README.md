@@ -16,7 +16,7 @@ to launchd. If arm64e is not available on your system, toggle **Disable arm64e (
 configurator. This strips PAC signing from spawned processes so injection works without the
 native arm64e ABI.
 
-The configuration app is installed to `/Applications/Plugin Playground.app`.
+The configuration app is installed to `/Applications/Plugin Playground.app`. The installer loads the grant LaunchDaemon and creates `/opt/pluginplayground/current.options`. Tweaks can be added with **Install tweak** in the Configurator, or by copying a root-owned `.dylib` into `/opt/pluginplayground/tweaks/`.
 
 ![Configurator](.pics/Configurator.png)
 
@@ -50,7 +50,7 @@ If you use this option, disable or remove the Ammonia daemon at `/private/var/am
 sh ./install.sh
 ```
 
-Produces `PluginPlayground-1.0.0.pkg`. Run the `.pkg` to install, or pass a custom prefix path to install without the GUI installer. Uninstall with `./uninstall.sh`.
+Produces `PluginPlayground-1.0.0.pkg`. Run the `.pkg` to install. The package copies the grant LaunchDaemon plist, bootstraps it, and writes `current.options` if it is missing. Uninstall with `./uninstall.sh`.
 
 ## Documentation
 

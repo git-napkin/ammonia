@@ -1,5 +1,7 @@
 #include "pac_utils.h"
 #include <fcntl.h>
+#include <libkern/OSByteOrder.h>
+#include <mach/machine.h>
 #include <mach-o/fat.h>
 #include <mach-o/loader.h>
 #include <stdio.h>
@@ -205,6 +207,66 @@ bool sign_file(const char *path, void *entitlements_blob) {
         CFRelease(error);
 
     return status == errSecSuccess;
+}
+
+bool file_is_arm64e(const char *path) {
+    int fd = open(path, O_RDONLY);
+    if (fd < 0)
+        return false;
+
+    uint32_t magic;
+    if (read(fd, &magic, sizeof(magic)) != sizeof(magic)) {
+        close(fd);
+        return false;
+    }
+
+    if (magic == MH_MAGIC_64) {
+        if (lseek(fd, 0, SEEK_SET) == (off_t)-1) {
+            close(fd);
+            return false;
+        }
+        struct mach_header_64 hdr;
+        if (read(fd, &hdr, sizeof(hdr)) != sizeof(hdr)) {
+            close(fd);
+            return false;
+        }
+        close(fd);
+        return hdr.cputype == CPU_TYPE_ARM64 && is_arm64e_subtype(hdr.cpusubtype);
+    }
+
+    if (magic == FAT_MAGIC || magic == FAT_CIGAM) {
+        if (lseek(fd, 0, SEEK_SET) == (off_t)-1) {
+            close(fd);
+            return false;
+        }
+        struct fat_header fh;
+        if (read(fd, &fh, sizeof(fh)) != sizeof(fh)) {
+            close(fd);
+            return false;
+        }
+        bool swap = (magic == FAT_CIGAM);
+        uint32_t narch = swap ? OSSwapBigToHostInt32(fh.nfat_arch) : fh.nfat_arch;
+        if (narch > 16) {
+            close(fd);
+            return false;
+        }
+        for (uint32_t i = 0; i < narch; i++) {
+            struct fat_arch arch;
+            if (read(fd, &arch, sizeof(arch)) != sizeof(arch))
+                break;
+            uint32_t cputype = swap ? OSSwapBigToHostInt32(arch.cputype) : arch.cputype;
+            uint32_t subtype = swap ? OSSwapBigToHostInt32(arch.cpusubtype) : arch.cpusubtype;
+            if (cputype == (uint32_t)CPU_TYPE_ARM64 && is_arm64e_subtype(subtype)) {
+                close(fd);
+                return true;
+            }
+        }
+        close(fd);
+        return false;
+    }
+
+    close(fd);
+    return false;
 }
 
 bool depacify_file_in_place(const char *file_path) {

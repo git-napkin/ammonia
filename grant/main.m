@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/sysctl.h>
+#include <sys/syslimits.h>
 #include <syslog.h>
 #include <unistd.h>
 
@@ -67,6 +68,12 @@ int main(int argc, const char *argv[]) {
     uint64_t stack_contents = 0x00000000CAFEBABE;
     pid_t pid = 1;
     kern_return_t kr;
+    size_t payload_len = 0;
+    arm_thread_state64_t thread_state = {0};
+    arm_thread_state64_t machine_thread_state = {0};
+    thread_state_flavor_t thread_flavor = ARM_THREAD_STATE64;
+    mach_msg_type_number_t thread_flavor_count = ARM_THREAD_STATE64_COUNT;
+    mach_msg_type_number_t machine_thread_flavor_count = ARM_THREAD_STATE64_COUNT;
 
     char payload_path[PATH_MAX];
     if (snprintf(payload_path, sizeof(payload_path), "%s", HOOK_DYLIB) >=
@@ -91,40 +98,47 @@ int main(int argc, const char *argv[]) {
     kr = mach_vm_allocate(task, &stack, stack_size, VM_FLAGS_ANYWHERE);
     if (kr != KERN_SUCCESS) {
         syslog(LOG_ERR, "grant: stack alloc: %s", mach_error_string(kr));
-        return 1;
+        result = 1;
+        goto terminate;
     }
 
     kr = mach_vm_write(task, stack, (vm_address_t)&stack_contents,
                        sizeof(uint64_t));
     if (kr != KERN_SUCCESS) {
         syslog(LOG_ERR, "grant: stack write: %s", mach_error_string(kr));
-        return 1;
+        result = 1;
+        goto terminate;
     }
 
     kr = vm_protect(task, stack, stack_size, 1, VM_PROT_READ | VM_PROT_WRITE);
     if (kr != KERN_SUCCESS) {
         syslog(LOG_ERR, "grant: stack protect: %s", mach_error_string(kr));
-        return 1;
+        result = 1;
+        goto terminate;
     }
 
     kr = mach_vm_allocate(task, &code, sizeof(shell_code), VM_FLAGS_ANYWHERE);
     if (kr != KERN_SUCCESS) {
         syslog(LOG_ERR, "grant: code alloc: %s", mach_error_string(kr));
-        return 1;
+        result = 1;
+        goto terminate;
     }
 
-    size_t payload_len = strlen(payload_path) + 1;
+    payload_len = strlen(payload_path) + 1;
     kr = mach_vm_allocate(task, &payload_str, payload_len, VM_FLAGS_ANYWHERE);
     if (kr != KERN_SUCCESS) {
         syslog(LOG_ERR, "grant: payload str alloc: %s", mach_error_string(kr));
-        return 1;
+        payload_str = 0;
+        result = 1;
+        goto terminate;
     }
 
     kr = mach_vm_write(task, payload_str, (vm_address_t)payload_path,
                        payload_len);
     if (kr != KERN_SUCCESS) {
         syslog(LOG_ERR, "grant: payload str write: %s", mach_error_string(kr));
-        return 1;
+        result = 1;
+        goto terminate;
     }
 
     uint64_t pcfmt_address =
@@ -135,7 +149,8 @@ int main(int argc, const char *argv[]) {
         syslog(LOG_ERR,
                "grant: could not resolve pthread_create_from_mach_thread "
                "or dlopen");
-        return 1;
+        result = 1;
+        goto terminate;
     }
 
     uint64_t payload_address = (uint64_t)payload_str;
@@ -151,14 +166,16 @@ int main(int argc, const char *argv[]) {
                        sizeof(shell_code));
     if (kr != KERN_SUCCESS) {
         syslog(LOG_ERR, "grant: shellcode write: %s", mach_error_string(kr));
-        return 1;
+        result = 1;
+        goto terminate;
     }
 
     kr = vm_protect(task, code, sizeof(shell_code), 0,
                     VM_PROT_EXECUTE | VM_PROT_READ);
     if (kr != KERN_SUCCESS) {
         syslog(LOG_ERR, "grant: code protect rx: %s", mach_error_string(kr));
-        return 1;
+        result = 1;
+        goto terminate;
     }
 
     void *handle =
@@ -170,14 +187,9 @@ int main(int argc, const char *argv[]) {
 
     if (!_thread_convert_thread_state) {
         syslog(LOG_ERR, "grant: thread_convert_thread_state not found");
-        return 1;
+        result = 1;
+        goto terminate;
     }
-
-    arm_thread_state64_t thread_state = {0}, machine_thread_state = {0};
-    thread_state_flavor_t thread_flavor = ARM_THREAD_STATE64;
-    mach_msg_type_number_t thread_flavor_count = ARM_THREAD_STATE64_COUNT;
-    mach_msg_type_number_t machine_thread_flavor_count =
-        ARM_THREAD_STATE64_COUNT;
 
     __darwin_arm_thread_state64_set_pc_fptr(
         thread_state,
@@ -188,7 +200,9 @@ int main(int argc, const char *argv[]) {
     kr = thread_create(task, &thread);
     if (kr != KERN_SUCCESS) {
         syslog(LOG_ERR, "grant: thread_create: %s", mach_error_string(kr));
-        return 1;
+        thread = 0;
+        result = 1;
+        goto terminate;
     }
 
     kr = _thread_convert_thread_state(
@@ -197,19 +211,22 @@ int main(int argc, const char *argv[]) {
         &machine_thread_flavor_count);
     if (kr != KERN_SUCCESS) {
         syslog(LOG_ERR, "grant: thread_convert: %s", mach_error_string(kr));
-        thread_terminate(thread);
-        return 1;
+        result = 1;
+        goto terminate;
     }
 
     if (os_version_at_least(14, 4)) {
         thread_terminate(thread);
+        thread = 0;
         kr = thread_create_running(task, thread_flavor,
                                    (thread_state_t)&machine_thread_state,
                                    machine_thread_flavor_count, &thread);
         if (kr != KERN_SUCCESS) {
             syslog(LOG_ERR, "grant: thread_create_running: %s",
                    mach_error_string(kr));
-            return 1;
+            thread = 0;
+            result = 1;
+            goto terminate;
         }
     } else {
         kr = thread_set_state(thread, thread_flavor,
@@ -218,13 +235,15 @@ int main(int argc, const char *argv[]) {
         if (kr != KERN_SUCCESS) {
             syslog(LOG_ERR, "grant: thread_set_state: %s",
                    mach_error_string(kr));
-            return 1;
+            result = 1;
+            goto terminate;
         }
         kr = thread_resume(thread);
         if (kr != KERN_SUCCESS) {
             syslog(LOG_ERR, "grant: thread_resume: %s",
                    mach_error_string(kr));
-            return 1;
+            result = 1;
+            goto terminate;
         }
     }
 
@@ -250,6 +269,17 @@ int main(int argc, const char *argv[]) {
     result = 1;
 
 terminate:
-    thread_terminate(thread);
+    if (thread) {
+        thread_terminate(thread);
+        usleep(10000);
+    }
+    if (task) {
+        if (stack)
+            mach_vm_deallocate(task, stack, stack_size);
+        if (code)
+            mach_vm_deallocate(task, code, sizeof(shell_code));
+        if (payload_str)
+            mach_vm_deallocate(task, payload_str, payload_len);
+    }
     return result;
 }

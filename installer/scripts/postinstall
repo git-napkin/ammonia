@@ -1,0 +1,40 @@
+#!/bin/sh
+set -eu
+
+SUPPORT="/opt/pluginplayground"
+PLIST="/Library/LaunchDaemons/com.pluginplayground.grant.plist"
+OPTS="$SUPPORT/current.options"
+
+mkdir -p /var/log/pluginplayground
+chmod 755 "$SUPPORT/tweaks" 2>/dev/null || true
+
+if [ ! -f "$OPTS" ]; then
+    cat > "$OPTS" <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>disablePAC</key>
+	<false/>
+	<key>useLegacyAmmonia</key>
+	<false/>
+	<key>pauseInjection</key>
+	<false/>
+	<key>enabledTweaks</key>
+	<array/>
+</dict>
+</plist>
+EOF
+fi
+chmod 666 "$OPTS" 2>/dev/null || true
+
+if [ -f "$PLIST" ]; then
+    chown root:wheel "$PLIST"
+    chmod 644 "$PLIST"
+    launchctl bootout system/com.pluginplayground.grant 2>/dev/null || true
+    if ! launchctl bootstrap system "$PLIST"; then
+        launchctl load "$PLIST"
+    fi
+fi
+
+exit 0

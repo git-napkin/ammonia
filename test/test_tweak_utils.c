@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 static int tests_pass = 0, tests_fail = 0;
 
@@ -64,6 +65,64 @@ static void test_check_list_match_no_file(void) {
     PASS;
 }
 
+static void test_should_load_tweak(void) {
+    TEST("should_load_tweak");
+    char tmpl[] = "/tmp/pp_tweak_test.XXXXXX";
+    char *dir = mkdtemp(tmpl);
+    ASSERT(dir != NULL, "mkdtemp");
+
+    char dylib[1024], wl[1024], bl[1024];
+    snprintf(dylib, sizeof(dylib), "%s/foo.dylib", dir);
+    snprintf(wl, sizeof(wl), "%s/foo.dylib.whitelist", dir);
+    snprintf(bl, sizeof(bl), "%s/foo.dylib.blacklist", dir);
+
+    FILE *f = fopen(dylib, "w");
+    ASSERT(f != NULL, "create dylib");
+    fclose(f);
+
+    ASSERT(should_load_tweak(dir, "foo.dylib",
+                             "/Applications/Safari.app/Contents/MacOS/Safari"),
+           "no sidecar allows all");
+    ASSERT(!should_load_tweak(dir, "../foo.dylib",
+                              "/Applications/Safari.app/Contents/MacOS/Safari"),
+           "reject traversal name");
+
+    f = fopen(wl, "w");
+    ASSERT(f != NULL, "create whitelist");
+    fprintf(f, "Safari\n");
+    fclose(f);
+    ASSERT(should_load_tweak(dir, "foo.dylib",
+                             "/Applications/Safari.app/Contents/MacOS/Safari"),
+           "whitelist hit");
+    ASSERT(!should_load_tweak(dir, "foo.dylib",
+                              "/System/Library/CoreServices/Finder.app/Contents/MacOS/Finder"),
+           "whitelist miss");
+
+    f = fopen(wl, "w");
+    ASSERT(f != NULL, "truncate whitelist");
+    fclose(f);
+    ASSERT(!should_load_tweak(dir, "foo.dylib",
+                              "/Applications/Safari.app/Contents/MacOS/Safari"),
+           "empty whitelist matches nothing");
+
+    unlink(wl);
+    f = fopen(bl, "w");
+    ASSERT(f != NULL, "create blacklist");
+    fprintf(f, "Finder\n");
+    fclose(f);
+    ASSERT(should_load_tweak(dir, "foo.dylib",
+                             "/Applications/Safari.app/Contents/MacOS/Safari"),
+           "blacklist other");
+    ASSERT(!should_load_tweak(dir, "foo.dylib",
+                              "/System/Library/CoreServices/Finder.app/Contents/MacOS/Finder"),
+           "blacklist hit");
+
+    unlink(dylib);
+    unlink(bl);
+    rmdir(dir);
+    PASS;
+}
+
 int main(void) {
     printf("tweak_utils tests:\n");
     test_path_ends_with();
@@ -72,6 +131,7 @@ int main(void) {
     test_swap32_if();
     test_is_tweak_safe();
     test_check_list_match_no_file();
+    test_should_load_tweak();
 
     printf("\n%d passed, %d failed\n", tests_pass, tests_fail);
     return tests_fail > 0 ? 1 : 0;

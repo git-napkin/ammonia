@@ -5,6 +5,7 @@
 struct TweakOptions {
     std::vector<std::string> blacklistedApps;
     std::vector<std::string> frameworkDependencies;
+    std::vector<std::string> processWhitelist;
 };
 
 struct TweakData {
@@ -17,6 +18,7 @@ std::vector<TweakData> scanTweaks();
 bool toggleTweak(const std::string& name);
 bool hasDeveloperTools();
 bool packageTweak(const std::string& name);
+bool installTweakFromDialog();
 TweakOptions loadTweakOptions(const std::string& name);
 bool saveTweakOptions(const std::string& name, const TweakOptions& opts);
 bool ensurePermissions();

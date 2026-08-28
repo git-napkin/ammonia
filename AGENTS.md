@@ -38,7 +38,7 @@ sh ./setup_frida.sh
 | `BUILD_ARM64E` | `ON` | arm64e vs arm64. Off → plain arm64 (requires `disablePAC` toggle at runtime). |
 | `BUILD_CONFIGURATOR` | `ON` | GUI app. Requires Slint via FetchContent (first build downloads from GitHub). |
 | `BUILD_TESTS` | `ON` | CTest unit tests. |
-| `CODESIGN_IDENTITY` | `-` | Ad-hoc by default. Uses `Master.entitlements`. |
+| `CODESIGN_IDENTITY` | `-` | Ad-hoc by default. `grant` is signed with `Master.entitlements`. Hook dylibs are signed without an entitlements file. |
 | `CMAKE_INSTALL_PREFIX` | `/opt/pluginplayground` | Staging/install prefix when using `cmake --install`. |
 
 Debug builds (`-DCMAKE_BUILD_TYPE=Debug`) auto-enable AddressSanitizer and clang-tidy (if available).
@@ -98,9 +98,10 @@ grant (LaunchDaemon, boot)
       → loads enabled .dylib tweaks from /opt/pluginplayground/tweaks/
 ```
 
-- `syphon/exe.c` — PAC stripping: reads `disablePAC` from `current.options`, copies `.app` bundles to `/tmp/RuntimeApplications/`, zeroes arm64e cpusubtype, removes `LC_CODE_SIGNATURE`, ad-hoc re-signs.
-- `syphon/options_loader.c` — live-reloads `current.options` via dispatch VNODE watcher.
+- `syphon/exe.c` — PAC stripping: reads `disablePAC` from `current.options`. For arm64e `.app` bundles only, copies to `/tmp/RuntimeApplications/` with `copyfile(COPYFILE_CLONE)` (APFS copy-on-write, full copy fallback), zeroes arm64e cpusubtype, removes `LC_CODE_SIGNATURE`, ad-hoc re-signs. Skips plain arm64. Copy/depacify/resign failure spawns the original path.
+- `syphon/options_loader.c` — live-reloads `current.options` via dispatch VNODE watcher (100ms debounce).
 - `syphon/tweak_utils.c` — whitelist/blacklist matching, path-traversal guards, tweak loading.
+- `include/playground_tweak.h` — optional `LoadFunction(void *interceptor)` entry for tweak authors.
 - `configurator/` — Slint GUI (`configurator.slint` + `controller.cpp`/`dmanager.cpp`/`options.cpp`/`tweaks.cpp`).
 
 ## Install layout
@@ -111,9 +112,12 @@ grant (LaunchDaemon, boot)
   lib/libfangs_hook.dylib        # Frida-Gum posix_spawn hook (in launchd)
   lib/libplayground_opener.dylib # per-process tweak loader
   lib/fridagum.dylib             # Frida-Gum runtime (build prerequisite)
+  share/com.pluginplayground.grant.plist
+  include/playground_tweak.h     # optional LoadFunction() for tweak authors
   tweaks/*.dylib                 # tweaks + .whitelist/.blacklist/.options sidecars
-  current.options                # plist config (chmod 666 after GUI creates it)
+  current.options                # plist config (created by the pkg, chmod 666)
   ammonia.blacklist              # process blacklist for fangs_hook
+/Library/LaunchDaemons/com.pluginplayground.grant.plist
 /Applications/Plugin Playground.app   # configurator GUI
 ```
 
@@ -127,14 +131,17 @@ defaults write /opt/pluginplayground/current.options enabledTweaks -array-add "M
 defaults read /opt/pluginplayground/current.options
 ```
 
-First write needs `sudo` (file created by GUI with `chmod 666`). Keys: `disablePAC`, `useLegacyAmmonia`, `pauseInjection` (bools); `enabledTweaks` (array of filenames). Options reload live — no restart needed.
+First write needs `sudo` only if the pkg postinstall has not created the file yet. The installer creates `current.options` with `chmod 666`. Keys: `disablePAC`, `useLegacyAmmonia`, `pauseInjection` (bools); `enabledTweaks` (array of filenames). Options reload live. No restart needed.
+
+The grant LaunchDaemon is `KeepAlive` only when grant exits nonzero (throttled to 10s). A successful inject does not restart grant in a loop.
 
 ## Gotchas
 
 - **arm64e vs arm64**: Nix and CI builds produce arm64. If not running native arm64e, set `disablePAC=true` (or toggle in Configurator). Native arm64e needs the `boot-args` nvram flag.
 - **Slint FetchContent**: first `BUILD_CONFIGURATOR=ON` build downloads Slint v1.16.1 from GitHub. No network → set `FETCHCONTENT_SOURCE_DIR_SLINT` or use Nix.
 - **Build dirs**: `.build/`, `.build-cargo/`, `Build/` are gitignored. The CMake build symlinks `$BUILD_DIR/cargo` → `.build-cargo` for Rust dependency caching.
-- **Tweak compilation**: tweaks are arm64 bundles (`-bundle -undefined dynamic_lookup`). See `testing/Makefile` for the canonical flags.
+- **Tweak compilation**: tweaks are arm64 bundles (`-bundle -undefined dynamic_lookup`). See `testing/Makefile` for the canonical flags. Export `LoadFunction(void *interceptor)` if you need the process Frida interceptor. Include `/opt/pluginplayground/include/playground_tweak.h`.
+- **Tweak targeting**: `Name.dylib.whitelist` (one executable per line) is exclusive when the file exists, including empty. An empty whitelist loads nowhere. The Configurator Edit sheet writes that sidecar. `blacklistedApps` in `Name.dylib.options` still applies after whitelist/blacklist files.
 - **Legacy Ammonia**: `useLegacyAmmonia=true` loads from `/private/var/ammonia/core/tweaks/`. Disable/remove the Ammonia daemon first to avoid conflicts.
 - **Uninstall**: `./uninstall.sh` (re-elevates via sudo). Reboot recommended to clear injected code.
 

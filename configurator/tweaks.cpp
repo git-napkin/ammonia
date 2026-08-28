@@ -9,6 +9,7 @@
 #include <cerrno>
 #include <cstdio>
 #include <dirent.h>
+#include <stdio.h>
 #include <sys/stat.h>
 #include <sys/syslimits.h>
 #include <unordered_set>
@@ -68,8 +69,12 @@ std::vector<TweakData> scanTweaks() {
             disabled_markers.push_back(name);
             continue;
         }
-        if (endsWith(name, ".dylib"))
+        if (endsWith(name, ".dylib")) {
+            if (name.find("..") != std::string::npos ||
+                name.find('/') != std::string::npos)
+                continue;
             result.push_back({name, false});
+        }
     }
     closedir(d);
 
@@ -133,6 +138,100 @@ static bool is_safe_tweak_name(const std::string &name) {
     return true;
 }
 
+static std::vector<std::string> readSidecarLines(const std::string &path) {
+    std::vector<std::string> lines;
+    FILE *f = fopen(path.c_str(), "r");
+    if (!f)
+        return lines;
+    char *line = nullptr;
+    size_t cap = 0;
+    ssize_t nread;
+    while ((nread = getline(&line, &cap, f)) != -1) {
+        while (nread > 0 && (line[nread - 1] == '\n' || line[nread - 1] == '\r'))
+            line[--nread] = '\0';
+        char *p = line;
+        while (*p == ' ' || *p == '\t')
+            p++;
+        if (*p == '\0' || *p == '#')
+            continue;
+        lines.emplace_back(p);
+    }
+    free(line);
+    fclose(f);
+    return lines;
+}
+
+static bool writeSidecarLines(const std::string &path,
+                              const std::vector<std::string> &lines) {
+    if (lines.empty()) {
+        unlink(path.c_str());
+        return true;
+    }
+    std::string tmp = path + ".tmp";
+    FILE *f = fopen(tmp.c_str(), "w");
+    if (!f)
+        return false;
+    for (const auto &line : lines)
+        fprintf(f, "%s\n", line.c_str());
+    bool ok = fflush(f) == 0 && fsync(fileno(f)) == 0;
+    fclose(f);
+    if (!ok) {
+        unlink(tmp.c_str());
+        return false;
+    }
+    if (rename(tmp.c_str(), path.c_str()) != 0) {
+        unlink(tmp.c_str());
+        return false;
+    }
+    return true;
+}
+
+static std::string asLiteral(const std::string &s) {
+    std::string out = "\"";
+    for (char c : s) {
+        if (c == '\\' || c == '"')
+            out += '\\';
+        out += c;
+    }
+    out += '"';
+    return out;
+}
+
+bool installTweakFromDialog() {
+    const char *chooseArgs[] = {
+        "/usr/bin/osascript", "-e",
+        "POSIX path of (choose file with prompt \"Choose a tweak dylib\" of "
+        "type {\"dylib\"})",
+        nullptr};
+    int status = -1;
+    std::string chosen = runCapture("/usr/bin/osascript", chooseArgs, &status);
+    while (!chosen.empty() && (chosen.back() == '\n' || chosen.back() == '\r'))
+        chosen.pop_back();
+    if (status != 0 || chosen.empty())
+        return false;
+
+    auto slash = chosen.find_last_of('/');
+    std::string base = slash == std::string::npos ? chosen : chosen.substr(slash + 1);
+    if (!is_safe_tweak_name(base) || !endsWith(base, ".dylib"))
+        return false;
+
+    Options opts = loadOptions();
+    std::string dest = tweakPath(tweaksDirFrom(opts), base);
+    std::string script =
+        "do shell script \"install -o root -g wheel -m 755 \" & quoted form of " +
+        asLiteral(chosen) + " & \" \" & quoted form of " + asLiteral(dest) +
+        " with administrator privileges";
+    if (!runPrivilegedScript(script.c_str()))
+        return false;
+
+    if (std::find(opts.enabledTweaks.begin(), opts.enabledTweaks.end(), base) ==
+        opts.enabledTweaks.end()) {
+        opts.enabledTweaks.push_back(base);
+        saveOptions(opts);
+    }
+    return true;
+}
+
 bool packageTweak(const std::string &name) {
     if (!is_safe_tweak_name(name))
         return false;
@@ -153,6 +252,18 @@ bool packageTweak(const std::string &name) {
         return false;
     }
 
+    auto copySidecar = [&](const std::string &suffix) {
+        std::string src = tweakPath(dir, name + suffix);
+        if (access(src.c_str(), R_OK) != 0)
+            return;
+        copyfile(src.c_str(), (tweakDest + "/" + name + suffix).c_str(), nullptr,
+                 COPYFILE_ALL);
+    };
+    copySidecar(".whitelist");
+    copySidecar(".blacklist");
+    copySidecar(".options");
+    copySidecar(".png");
+
     std::string pkgName = "/tmp/" + name + ".pkg";
     std::string pkgIdent = "com.pluginplayground.tweak." + name;
     const char *pkgbuildArgs[] = {
@@ -168,6 +279,7 @@ bool packageTweak(const std::string &name) {
 
 TweakOptions loadTweakOptions(const std::string &name) {
     TweakOptions opts;
+    opts.processWhitelist = readSidecarLines(tweaksDir() + "/" + name + ".whitelist");
     CFDataRef data = fileRead(tweakOptionsPath(name).c_str());
     if (!data)
         return opts;
@@ -233,7 +345,10 @@ bool saveTweakOptions(const std::string &name, const TweakOptions &opts) {
         return false;
     bool ok = fileWrite(tweakOptionsPath(name).c_str(), data);
     CFRelease(data);
-    return ok;
+    if (!ok)
+        return false;
+    return writeSidecarLines(tweaksDir() + "/" + name + ".whitelist",
+                             opts.processWhitelist);
 }
 
 bool ensurePermissions() {

@@ -40,7 +40,15 @@ function(syphon_codesign target)
         COMMAND codesign -f -s "${CODESIGN_IDENTITY}"
                 --entitlements "${CMAKE_SOURCE_DIR}/Master.entitlements"
                 $<TARGET_FILE:${target}>
-        COMMENT "codesigning ${target} (identity: ${CODESIGN_IDENTITY})"
+        COMMENT "codesigning ${target} with entitlements (identity: ${CODESIGN_IDENTITY})"
+    )
+endfunction()
+
+function(syphon_codesign_dylib target)
+  add_custom_command(TARGET ${target} POST_BUILD
+        COMMAND codesign -f -s "${CODESIGN_IDENTITY}"
+                $<TARGET_FILE:${target}>
+        COMMENT "codesigning ${target} ad-hoc (identity: ${CODESIGN_IDENTITY})"
     )
 endfunction()
 
@@ -72,6 +80,7 @@ target_link_libraries(fangs_hook PRIVATE
     "-framework CoreFoundation"
     "-framework Security"
 )
+syphon_codesign_dylib(fangs_hook)
 
 # ── libplayground_opener: per-process tweak loader ────────────────────────
 add_library(playground_opener SHARED
@@ -82,6 +91,7 @@ target_include_directories(playground_opener PRIVATE ${SYPHON_INCLUDE_PRIVATE})
 target_link_libraries(playground_opener PRIVATE
     "-framework CoreFoundation"
 )
+syphon_codesign_dylib(playground_opener)
 
 # ── Privilege grant tool (launchd shellcode injector) ─────────────────────
 add_executable(grant grant/main.m)
@@ -176,3 +186,5 @@ endif()
 # ── Install ──────────────────────────────────────────────────────────────
 install(TARGETS grant RUNTIME DESTINATION bin)
 install(TARGETS fangs_hook playground_opener LIBRARY DESTINATION lib)
+install(FILES grant/com.pluginplayground.grant.plist DESTINATION share)
+install(FILES include/playground_tweak.h DESTINATION include)

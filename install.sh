@@ -22,13 +22,17 @@ STAGING="$(mktemp -d)"
 trap "rm -rf '$STAGING'" EXIT
 
 PKG_ROOT="$STAGING/root/opt/pluginplayground"
-mkdir -p "$PKG_ROOT/bin" "$PKG_ROOT/lib" "$PKG_ROOT/tweaks"
+mkdir -p "$PKG_ROOT/bin" "$PKG_ROOT/lib" "$PKG_ROOT/tweaks" "$PKG_ROOT/share" "$PKG_ROOT/include"
 mkdir -p "$STAGING/root/Applications"
+mkdir -p "$STAGING/root/Library/LaunchDaemons"
 
 cp "$SRC/.build/grant"                    "$PKG_ROOT/bin/"
 cp "$SRC/.build/libfangs_hook.dylib"      "$PKG_ROOT/lib/"
 cp "$SRC/.build/libplayground_opener.dylib" "$PKG_ROOT/lib/"
 cp "$SRC/fridagum.dylib"                   "$PKG_ROOT/lib/"
+cp "$SRC/grant/com.pluginplayground.grant.plist" "$PKG_ROOT/share/"
+cp "$SRC/grant/com.pluginplayground.grant.plist" "$STAGING/root/Library/LaunchDaemons/"
+cp "$SRC/include/playground_tweak.h"      "$PKG_ROOT/include/"
 cp -R "$SRC/.build/configurator.app"       "$STAGING/root/Applications/Plugin Playground.app/"
 
 # ownership and permissions
@@ -38,12 +42,16 @@ chmod 755 "$PKG_ROOT/lib/libfangs_hook.dylib"
 chmod 755 "$PKG_ROOT/lib/libplayground_opener.dylib"
 chmod 755 "$PKG_ROOT/lib/fridagum.dylib"
 chmod 755 "$PKG_ROOT/tweaks"
+chmod 644 "$PKG_ROOT/share/com.pluginplayground.grant.plist"
+chmod 644 "$STAGING/root/Library/LaunchDaemons/com.pluginplayground.grant.plist"
+chmod 644 "$PKG_ROOT/include/playground_tweak.h"
 
 echo "[+] Building component package..."
 pkgbuild --root "$STAGING/root" \
          --identifier "com.pluginplayground.core" \
          --version "$VERSION" \
          --install-location "/" \
+         --scripts "$SRC/installer/scripts" \
          "$STAGING/PluginPlaygroundCore.pkg" > /dev/null
 
 echo "[+] Building distribution package..."

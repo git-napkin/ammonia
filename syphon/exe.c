@@ -3,12 +3,16 @@
 #include "pac_utils.h"
 #include "log.h"
 #include <errno.h>
+#include <os/lock.h>
 #include <removefile.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
+
+static os_unfair_lock g_ready_lock = OS_UNFAIR_LOCK_INIT;
 
 static char *find_bundle_ext(char *path) {
     char *last = NULL;
@@ -27,7 +31,14 @@ static bool timespec_newer(const struct timespec *a, const struct timespec *b) {
            (a->tv_sec == b->tv_sec && a->tv_nsec > b->tv_nsec);
 }
 
-char *getready_process(const char *path) {
+static uint32_t path_hash(const char *s) {
+    uint32_t h = 2166136261u;
+    for (; *s; s++)
+        h = (h ^ (unsigned char)*s) * 16777619u;
+    return h;
+}
+
+static char *getready_process_locked(const char *path) {
     if (!path_is_bundle(path))
         return NULL;
 
@@ -37,14 +48,20 @@ char *getready_process(const char *path) {
     if (app_ext)
         app_ext[4] = '\0';
 
+    char orig_exec[PATH_MAX];
+    if (!get_bundle_executable_path(bundle_root, orig_exec, sizeof(orig_exec)))
+        return NULL;
+    if (!file_is_arm64e(orig_exec))
+        return NULL;
+
     const char *bundle_name = strrchr(bundle_root, '/');
     bundle_name = bundle_name ? bundle_name + 1 : bundle_root;
 
     char runtime_apps_dir[PATH_MAX];
     char dst_bundle_path[PATH_MAX];
     snprintf(runtime_apps_dir, sizeof(runtime_apps_dir), "/tmp/RuntimeApplications");
-    snprintf(dst_bundle_path, sizeof(dst_bundle_path), "%s/%s", runtime_apps_dir,
-             bundle_name);
+    snprintf(dst_bundle_path, sizeof(dst_bundle_path), "%s/%s-%08x", runtime_apps_dir,
+             bundle_name, path_hash(bundle_root));
 
     log_info("[bootstrap] processing bundle: %s", bundle_root);
 
@@ -89,13 +106,24 @@ char *getready_process(const char *path) {
     log_info("[bootstrap] depacifying executable: %s", bundle_exec_tmp);
     if (!depacify_file_in_place(bundle_exec_tmp)) {
         syslog(LOG_ERR, "[bootstrap] failed to depacify bundle executable");
-        return strdup(bundle_exec_tmp);
+        removefile(dst_bundle_path, NULL, REMOVEFILE_RECURSIVE);
+        return NULL;
     }
 
     log_info("[bootstrap] resigning bundle: %s", dst_bundle_path);
-    if (!resign_bundle(dst_bundle_path))
-        syslog(LOG_ERR, "[bootstrap] failed to resign bundle, continuing anyway");
+    if (!resign_bundle(dst_bundle_path)) {
+        syslog(LOG_ERR, "[bootstrap] failed to resign bundle");
+        removefile(dst_bundle_path, NULL, REMOVEFILE_RECURSIVE);
+        return NULL;
+    }
 
     syslog(LOG_INFO, "[bootstrap] using depacified bundle");
     return strdup(bundle_exec_tmp);
+}
+
+char *getready_process(const char *path) {
+    os_unfair_lock_lock(&g_ready_lock);
+    char *result = getready_process_locked(path);
+    os_unfair_lock_unlock(&g_ready_lock);
+    return result;
 }

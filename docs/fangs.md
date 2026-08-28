@@ -11,3 +11,5 @@ A Frida-Gum interceptor library (`libfangs_hook.dylib`) injected into launchd at
 7. Injects `DYLD_INSERT_LIBRARIES=libplayground_opener.dylib` into eligible processes.
 
 Loaded automatically inside launchd by the `grant` daemon's shellcode injection. Required, no opt-out.
+
+`libfangs_hook.dylib` and `fridagum.dylib` are ad-hoc signed (`CodeDirectory flags=0x2`). That signature does not set `CS_LIBRARY_VALIDATION`, which is what `gum_interceptor_replace` needs on the dyld shared cache on macOS 26. Entitlement blobs do not embed on these dylibs. `grant` is signed with `Master.entitlements`, including `com.apple.security.cs.disable-library-validation`.

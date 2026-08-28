@@ -6,6 +6,8 @@
 #include <mach-o/fat.h>
 #include <mach-o/loader.h>
 #include <os/lock.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -136,31 +138,46 @@ static bool mapped_links_to_framework(const void *mapped, size_t size,
     return macho_has_framework((const char *)mapped, size, framework);
 }
 
+static os_unfair_lock s_exe_map_lock = OS_UNFAIR_LOCK_INIT;
+
 bool exe_links_to_framework(const char *exe_path, const char *framework) {
     if (!exe_path || !framework)
         return false;
 
+    os_unfair_lock_lock(&s_exe_map_lock);
     if (!s_exe_map.map || strcmp(s_exe_map.path, exe_path) != 0) {
         unmap_exe();
         int fd = open(exe_path, O_RDONLY | O_NOFOLLOW);
-        if (fd < 0)
+        if (fd < 0) {
+            os_unfair_lock_unlock(&s_exe_map_lock);
             return false;
+        }
         struct stat st;
-        if (fstat(fd, &st) < 0 || !S_ISREG(st.st_mode)) {
+        if (fstat(fd, &st) < 0 || !S_ISREG(st.st_mode) || st.st_size <= 0) {
             close(fd);
+            os_unfair_lock_unlock(&s_exe_map_lock);
             return false;
         }
         size_t size = (size_t)st.st_size;
+        if (size > 64u * 1024u * 1024u) {
+            close(fd);
+            os_unfair_lock_unlock(&s_exe_map_lock);
+            return false;
+        }
         void *mapped = mmap(NULL, size, PROT_READ, MAP_PRIVATE, fd, 0);
         close(fd);
-        if (mapped == MAP_FAILED)
+        if (mapped == MAP_FAILED) {
+            os_unfair_lock_unlock(&s_exe_map_lock);
             return false;
+        }
         snprintf(s_exe_map.path, sizeof(s_exe_map.path), "%s", exe_path);
         s_exe_map.map = mapped;
         s_exe_map.size = size;
     }
 
-    return mapped_links_to_framework(s_exe_map.map, s_exe_map.size, framework);
+    bool result = mapped_links_to_framework(s_exe_map.map, s_exe_map.size, framework);
+    os_unfair_lock_unlock(&s_exe_map_lock);
+    return result;
 }
 
 static int list_match(const char *path, const char *exe) {
@@ -168,12 +185,15 @@ static int list_match(const char *path, const char *exe) {
     if (!f)
         return -1;
 
-    char line[256];
+    char *line = NULL;
+    size_t cap = 0;
     int matched = 0;
-    while (fgets(line, sizeof(line), f)) {
-        size_t len = strlen(line);
-        while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r'))
-            line[--len] = '\0';
+    ssize_t nread;
+    while ((nread = getline(&line, &cap, f)) != -1) {
+        if (nread > 0 && (line[nread - 1] == '\n' || line[nread - 1] == '\r'))
+            line[--nread] = '\0';
+        while (nread > 0 && (line[nread - 1] == ' ' || line[nread - 1] == '\t'))
+            line[--nread] = '\0';
         char *p = line;
         while (*p == ' ' || *p == '\t')
             p++;
@@ -184,6 +204,7 @@ static int list_match(const char *path, const char *exe) {
             break;
         }
     }
+    free(line);
     fclose(f);
     return matched;
 }
@@ -223,9 +244,20 @@ bool should_load_tweak(const char *dir, const char *name, const char *exe) {
 char *get_exe_path(void) {
     uint32_t bufsize = 0;
     _NSGetExecutablePath(NULL, &bufsize);
+    if (bufsize == 0)
+        return NULL;
     char *path = malloc(bufsize);
-    if (!path) return NULL;
-    _NSGetExecutablePath(path, &bufsize);
+    if (!path)
+        return NULL;
+    if (_NSGetExecutablePath(path, &bufsize) != 0) {
+        free(path);
+        return NULL;
+    }
+    char *resolved = realpath(path, NULL);
+    if (resolved) {
+        free(path);
+        return resolved;
+    }
     return path;
 }
 
@@ -240,7 +272,7 @@ CFDictionaryRef fangs_read_plist_dictionary(const char *path) {
 
     fseek(f, 0, SEEK_END);
     long len = ftell(f);
-    if (len < 0) { fclose(f); return NULL; }
+    if (len < 0 || len > 1024 * 1024) { fclose(f); return NULL; }
     fseek(f, 0, SEEK_SET);
 
     char *buf = malloc((size_t)len);

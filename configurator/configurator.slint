@@ -162,6 +162,7 @@ component ToggleRow inherits Rectangle {
     in property <string> title;
     in property <string> description;
     in-out property <bool> checked;
+    callback changed;
     min-height: 44px;
     border-radius: Theme.radius-row;
     background: touch.has-hover ? Theme.row-hover : transparent;
@@ -169,7 +170,10 @@ component ToggleRow inherits Rectangle {
 
     touch := TouchArea {
         mouse-cursor: MouseCursor.pointer;
-        clicked => { root.checked = !root.checked; }
+        clicked => {
+            root.checked = !root.checked;
+            root.changed();
+        }
     }
 
     HorizontalLayout {
@@ -469,6 +473,7 @@ export component MainWindow inherits Window {
     callback edit-tweak(string);
     callback toggle-tweak(int);
     callback package-tweak(string);
+    callback install-tweak();
     callback install-daemon();
     callback uninstall-daemon();
 
@@ -485,8 +490,8 @@ export component MainWindow inherits Window {
         : (root.sip-kind == 2 ? "SIP is off — injection can run."
         : "Could not determine SIP status."));
     property <string> daemon-value:
-        root.daemon-kind == 1 ? "Running"
-        : (root.daemon-kind == 2 ? "Stopped" : "Not Installed");
+        root.daemon-kind == 1 ? "Loaded"
+        : (root.daemon-kind == 2 ? "Not loaded" : "Not Installed");
     property <color> daemon-color:
         root.daemon-kind == 1 ? Theme.success
         : (root.daemon-kind == 2 ? Theme.warning : Theme.danger);
@@ -526,18 +531,21 @@ export component MainWindow inherits Window {
                     title: "Legacy Ammonia folder";
                     description: "Load tweaks from /private/var/ammonia/core/tweaks.";
                     checked <=> root.use-legacy-ammonia;
+                    changed => { root.save(); }
                 }
                 RowDivider {}
                 ToggleRow {
                     title: "Disable arm64e (PAC)";
-                    description: "Strip PAC from newly spawned programs. Work in progress.";
+                    description: "Copy arm64e app bundles, strip PAC, and spawn the copy.";
                     checked <=> root.disable-pac;
+                    changed => { root.save(); }
                 }
                 RowDivider {}
                 ToggleRow {
                     title: "Pause tweak injection";
                     description: "Stop injecting into newly launched processes.";
                     checked <=> root.pause-injection;
+                    changed => { root.save(); }
                 }
             }
         }
@@ -577,14 +585,25 @@ export component MainWindow inherits Window {
             spacing: 6px;
             vertical-stretch: 1;
 
-            SectionLabel { text: "Installed tweaks"; }
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: center;
+                vertical-stretch: 0;
+
+                SectionLabel { text: "Installed tweaks"; horizontal-stretch: 1; }
+                AppButton {
+                    text: "Install tweak";
+                    min-side: 110px;
+                    clicked => { root.install-tweak(); }
+                }
+            }
 
             SurfaceCard {
                 vertical-stretch: 1;
                 content-radius: Theme.radius-control + Theme.pad-row;
 
                 if root.tweaks.length == 0: EmptyHint {
-                    text: "No tweaks installed. Add .dylib files to /opt/pluginplayground/tweaks.";
+                    text: "No tweaks installed. Add a .dylib with Install tweak, or copy one into the tweaks folder.";
                 }
 
                 if root.tweaks.length > 0: ListView {
@@ -631,9 +650,9 @@ export component MainWindow inherits Window {
 
 export component TweakEditor inherits Window {
     preferred-width: 520px;
-    preferred-height: 520px;
+    preferred-height: 640px;
     min-width: 440px;
-    min-height: 420px;
+    min-height: 520px;
     title: "Tweak Options";
     background: Palette.background;
     default-font-size: 13px;
@@ -641,11 +660,14 @@ export component TweakEditor inherits Window {
     in property <string> tweak-name;
     in-out property <[string]> blacklisted-apps;
     in-out property <[string]> framework-deps;
+    in-out property <[string]> process-whitelist;
 
     callback add-blacklisted(string);
     callback add-framework-dep(string);
+    callback add-whitelisted(string);
     callback remove-blacklisted(string);
     callback remove-framework-dep(string);
+    callback remove-whitelisted(string);
     callback save();
     callback cancel();
 
@@ -751,6 +773,54 @@ export component TweakEditor inherits Window {
                         clicked => {
                             root.add-framework-dep(i-fw-input.text);
                             i-fw-input.text = "";
+                        }
+                    }
+                }
+            }
+        }
+
+        VerticalLayout {
+            spacing: 6px;
+            vertical-stretch: 1;
+
+            SectionLabel { text: "Only load in these processes"; }
+
+            SurfaceCard {
+                vertical-stretch: 1;
+                gap: 4px;
+
+                if root.process-whitelist.length == 0: EmptyHint {
+                    text: "Empty means every process (minus blacklists).";
+                }
+
+                if root.process-whitelist.length > 0: ListView {
+                    vertical-stretch: 1;
+                    for proc in root.process-whitelist: ChipRow {
+                        label: proc;
+                        remove => { root.remove-whitelisted(proc); }
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: center;
+                    vertical-stretch: 0;
+
+                    i-wl-input := LineEdit {
+                        placeholder-text: "Executable name";
+                        horizontal-stretch: 1;
+                        accepted => {
+                            root.add-whitelisted(self.text);
+                            self.text = "";
+                        }
+                    }
+
+                    AppButton {
+                        text: "Add";
+                        min-side: 64px;
+                        clicked => {
+                            root.add-whitelisted(i-wl-input.text);
+                            i-wl-input.text = "";
                         }
                     }
                 }

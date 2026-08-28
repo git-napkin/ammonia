@@ -65,4 +65,4 @@ defaults read /opt/pluginplayground/current.options
 ```
 
 > [!NOTE]
-> If the file does not exist yet, use `sudo defaults write ...` the first time. After the Configurator GUI creates it, the file is writable by all users (`chmod 666`).
+> The pkg postinstall creates `/opt/pluginplayground/current.options` with `chmod 666` if it is missing. The Configurator keeps that mode after each save. If you create the file yourself, use `sudo defaults write` the first time.

@@ -4,6 +4,7 @@
 #include <dispatch/dispatch.h>
 #include <dlfcn.h>
 #include <errno.h>
+#include <os/lock.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -38,6 +39,7 @@ typedef struct {
 
 static LoadedModule *loaded_modules = NULL;
 static size_t loaded_count = 0;
+static os_unfair_lock g_scan_lock = OS_UNFAIR_LOCK_INIT;
 
 static bool timespec_equal(const struct timespec *a,
                            const struct timespec *b) {
@@ -89,21 +91,13 @@ static void try_load_tweak(const char *dir, const char *d_name,
     char full_path[PATH_MAX];
     snprintf(full_path, sizeof(full_path), "%s/%s", dir, d_name);
 
-    if (!should_load_tweak(dir, d_name, exe_path)) {
-        syslog(LOG_INFO,
-               "opener: %s not in whitelist/blacklist for this process",
-               d_name);
+    if (!should_load_tweak(dir, d_name, exe_path))
         return;
-    }
 
-    if (!check_dylib_options(dir, d_name, exe_path)) {
-        syslog(LOG_INFO, "opener: %s options filter rejected", d_name);
+    if (!check_dylib_options(dir, d_name, exe_path))
         return;
-    }
 
     if (!is_tweak_enabled(d_name)) {
-        syslog(LOG_INFO, "opener: %s not in enabled tweaks list, skipping",
-               d_name);
         LoadedModule *existing = find_loaded_module(full_path);
         if (existing && existing->handle != NULL) {
             dlclose(existing->handle);
@@ -151,11 +145,13 @@ static void try_load_tweak(const char *dir, const char *d_name,
 }
 
 static void scan_tweaks(void) {
+    os_unfair_lock_lock(&g_scan_lock);
     clear_tweak_enabled_cache();
 
     char *exe_path = get_exe_path();
     if (!exe_path) {
         syslog(LOG_ERR, "opener: cannot resolve executable path");
+        os_unfair_lock_unlock(&g_scan_lock);
         return;
     }
 
@@ -165,6 +161,7 @@ static void scan_tweaks(void) {
             syslog(LOG_ERR, "opener: opendir(%s): %s", tweak_base_dir,
                    strerror(errno));
         free(exe_path);
+        os_unfair_lock_unlock(&g_scan_lock);
         return;
     }
 
@@ -176,6 +173,7 @@ static void scan_tweaks(void) {
     }
     closedir(dr);
     free(exe_path);
+    os_unfair_lock_unlock(&g_scan_lock);
 }
 
 static void apply_options(void) {
@@ -200,6 +198,7 @@ static void setup_reload_handler(void) {
     }
     dispatch_source_set_event_handler(source, ^{
       syslog(LOG_INFO, "opener: reloading tweaks");
+      apply_options();
       scan_tweaks();
     });
     dispatch_resume(source);

@@ -153,6 +153,7 @@ static struct {
     bool used;
 } sea_cache[SEA_CACHE_SIZE];
 static unsigned sea_cache_next;
+static os_unfair_lock sea_cache_lock = OS_UNFAIR_LOCK_INIT;
 
 static bool is_node_sea_binary_uncached(const char *path) {
     int fd = open(path, O_RDONLY);
@@ -189,20 +190,27 @@ static bool is_node_sea_binary(const char *path) {
     struct stat st;
     if (stat(path, &st) != 0)
         return false;
+    os_unfair_lock_lock(&sea_cache_lock);
     for (unsigned i = 0; i < SEA_CACHE_SIZE; i++) {
         if (sea_cache[i].used && sea_cache[i].dev == st.st_dev &&
             sea_cache[i].ino == st.st_ino &&
             sea_cache[i].mtime.tv_sec == st.st_mtimespec.tv_sec &&
-            sea_cache[i].mtime.tv_nsec == st.st_mtimespec.tv_nsec)
-            return sea_cache[i].result;
+            sea_cache[i].mtime.tv_nsec == st.st_mtimespec.tv_nsec) {
+            bool cached = sea_cache[i].result;
+            os_unfair_lock_unlock(&sea_cache_lock);
+            return cached;
+        }
     }
+    os_unfair_lock_unlock(&sea_cache_lock);
     bool result = is_node_sea_binary_uncached(path);
+    os_unfair_lock_lock(&sea_cache_lock);
     unsigned slot = sea_cache_next++ % SEA_CACHE_SIZE;
     sea_cache[slot].dev = st.st_dev;
     sea_cache[slot].ino = st.st_ino;
     sea_cache[slot].mtime = st.st_mtimespec;
     sea_cache[slot].result = result;
     sea_cache[slot].used = true;
+    os_unfair_lock_unlock(&sea_cache_lock);
     return result;
 }
 
@@ -309,6 +317,10 @@ Spawn:
             if (pac_path) {
                 spawn_path = pac_path;
                 syslog(LOG_INFO, "fangs_hook: PAC stripping '%s' -> '%s'", path, pac_path);
+            } else if (path && strstr(path, ".app")) {
+                syslog(LOG_NOTICE,
+                       "fangs_hook: PAC strip skipped for '%s', spawning original",
+                       path);
             }
         }
         int k = spawn_fn(pid, spawn_path, ac, ab, __argv, (char *const *)playground);

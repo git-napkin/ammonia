@@ -12,7 +12,7 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - name: Ensure scripts are executable
-        run: chmod +x setup_frida.sh install.sh
+        run: chmod +x setup_frida.sh install.sh installer/scripts/postinstall
       - name: Download + build Frida-Gum
         run: ./setup_frida.sh
       - name: Show Xcode version
@@ -26,3 +26,5 @@ jobs:
           test -f Build/libfangs_hook.dylib
           test -f Build/libplayground_opener.dylib
           test -f Build/grant
+      - name: Unit tests
+        run: ctest --test-dir Build --output-on-failure
