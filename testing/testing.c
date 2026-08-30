@@ -21,17 +21,15 @@
 #include <dirent.h>
 #include <fcntl.h>
 
-#define SUPPORT_PATH "/opt/pluginplayground/"
+#define SUPPORT_PATH "/private/var/ammonia/core/"
 #define TWEAKS_DIR SUPPORT_PATH "tweaks/"
 #define OPTIONS_PATH SUPPORT_PATH "current.options"
 #define BLACKLIST_PATH SUPPORT_PATH "ammonia.blacklist"
-#define FRIDAGUM_PATH SUPPORT_PATH "lib/fridagum.dylib"
-#define OPENER_PATH SUPPORT_PATH "lib/libplayground_opener.dylib"
-#define FANGS_PATH SUPPORT_PATH "lib/libfangs_hook.dylib"
-#define RUNTIME_APPS_DIR "/tmp/RuntimeApplications"
-#define LEGACY_TWEAKS_DIR "/private/var/ammonia/core/tweaks"
-#define FLAG_XPCPROXY SUPPORT_PATH "disable-xpcproxy"
-#define GRANT_PATH SUPPORT_PATH "bin/grant"
+#define FRIDAGUM_PATH SUPPORT_PATH "fridagum.dylib"
+#define OPENER_PATH SUPPORT_PATH "libopener.dylib"
+#define INFECT_PATH SUPPORT_PATH "libinject.dylib"
+#define FLAG_XPCPROXY SUPPORT_PATH "ammonia.disable-xpcproxy"
+#define AMMONIA_PATH SUPPORT_PATH "ammonia"
 
 #define TEST_NAME "testing"
 
@@ -403,11 +401,6 @@ static void run_all_tests(void) {
     }
     {
         int val = 0;
-        int ok = plist_get_bool(OPTIONS_PATH, "useLegacyAmmonia", &val);
-        cap("CONFIG", "useLegacyAmmonia option readable from plist", ok);
-    }
-    {
-        int val = 0;
         int ok = plist_get_bool(OPTIONS_PATH, "pauseInjection", &val);
         cap("CONFIG", "pauseInjection option readable from plist", ok);
     }
@@ -457,8 +450,8 @@ static void run_all_tests(void) {
     }
 
     cap("ENV", "DYLD_INSERT_LIBRARIES is set", env_has("DYLD_INSERT_LIBRARIES"));
-    cap("ENV", "DYLD_INSERT_LIBRARIES contains playground_opener path",
-        env_contains("DYLD_INSERT_LIBRARIES", "libplayground_opener.dylib"));
+    cap("ENV", "DYLD_INSERT_LIBRARIES contains libopener path",
+        env_contains("DYLD_INSERT_LIBRARIES", "libopener.dylib"));
 
     cap("DYLD", "_NSGetExecutablePath works", exe[0] != 0);
     {
@@ -503,17 +496,11 @@ static void run_all_tests(void) {
     }
 
     cap("RUNTIME", SUPPORT_PATH " exists", fex(SUPPORT_PATH));
-    cap("RUNTIME", "lib/ directory exists", fex(SUPPORT_PATH "lib/"));
     cap("RUNTIME", "tweaks/ directory exists", fex(TWEAKS_DIR));
     cap("RUNTIME", "fridagum.dylib exists at " FRIDAGUM_PATH, fex(FRIDAGUM_PATH));
-    cap("RUNTIME", "playground_opener.dylib exists", fex(OPENER_PATH));
-    cap("RUNTIME", "fangs_hook.dylib exists", fex(FANGS_PATH));
-    cap("RUNTIME", "grant binary exists", fex(GRANT_PATH));
-    cap("RUNTIME", "ammonia.blacklist exists", fex(BLACKLIST_PATH));
-    cap("RUNTIME", "disable-xpcproxy flag check works", fex(FLAG_XPCPROXY) || 1);
-
-    cap("LEGACY", "Legacy tweaks dir /private/var/ammonia/core/tweaks exists",
-        fex(LEGACY_TWEAKS_DIR));
+    cap("RUNTIME", "libopener.dylib exists", fex(OPENER_PATH));
+    cap("RUNTIME", "libinject.dylib exists", fex(INFECT_PATH));
+    cap("RUNTIME", "ammonia binary exists", fex(AMMONIA_PATH));
 
     {
         void *cur = signal(SIGUSR1, SIG_IGN);
@@ -629,10 +616,10 @@ void LoadFunction(void *interceptor) {
 
     const char *home = getenv("HOME");
     if (!home) home = "/tmp";
-    snprintf(g_log, sizeof(g_log), "%s/pluginplayground_test_results.txt", home);
+    snprintf(g_log, sizeof(g_log), "%s/ammonia_test_results.txt", home);
     g_rpt = fopen(g_log, "w");
     if (!g_rpt) {
-        snprintf(g_log, sizeof(g_log), "/tmp/pluginplayground_test_results.txt");
+        snprintf(g_log, sizeof(g_log), "/tmp/ammonia_test_results.txt");
         g_rpt = fopen(g_log, "w");
     }
     if (!g_rpt) {
@@ -643,7 +630,7 @@ void LoadFunction(void *interceptor) {
     char exe[PATH_MAX]; exe[0] = 0;
     self_path(exe, sizeof(exe));
 
-    fprintf(g_rpt, "Plugin Playground capability test suite\n");
+    fprintf(g_rpt, "Ammonia capability test suite\n");
     fprintf(g_rpt, "Process PID: %d\n", getpid());
     fprintf(g_rpt, "Executable:  %s\n", exe[0] ? exe : "(unknown)");
     fprintf(g_rpt, "Interceptor: %p\n", (void *)g_interceptor);

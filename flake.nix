@@ -1,5 +1,5 @@
 {
-  description = "Plugin Playground - Open-source runtime tweak system for macOS";
+  description = "Ammonia — runtime tweak loader for macOS Apple Silicon";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
@@ -10,16 +10,9 @@
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
-        
-        slintSrc = pkgs.fetchFromGitHub {
-          owner = "slint-ui";
-          repo = "slint";
-          rev = "v1.16.1";
-          hash = "sha256-3M0uHMGJq249yUtIBiwx3zZODc+OH61QbhOW2gwQR8g=";
-        };
 
-        plugin-playground = pkgs.stdenv.mkDerivation {
-          pname = "plugin-playground";
+        ammonia = pkgs.stdenv.mkDerivation {
+          pname = "ammonia";
           version = "1.0-pre";
 
           src = ./.;
@@ -27,47 +20,23 @@
           nativeBuildInputs = [
             pkgs.cmake
             pkgs.darwin.sigtool
-            pkgs.rustPlatform.cargoSetupHook
-            pkgs.cargo
-            pkgs.rustc
-            pkgs.corrosion
           ];
 
           buildInputs = [
             pkgs.apple-sdk_26
           ];
 
-          cargoDeps = pkgs.rustPlatform.importCargoLock {
-            lockFile = "${slintSrc}/Cargo.lock";
-          };
-
-          postUnpack = ''
-            cp -R ${slintSrc} $sourceRoot/slintSrc
-            chmod -R +w $sourceRoot/slintSrc
-            cp $sourceRoot/slintSrc/Cargo.lock $sourceRoot/Cargo.lock
-
-            substituteInPlace $sourceRoot/slintSrc/api/cpp/CMakeLists.txt \
-              --replace-fail 'list(APPEND slint_compiler_features "jemalloc")' ""
-          '';
-
-          postPatch = ''
-            substituteInPlace CMakeLists.txt \
-              --replace-fail "--timestamp=none" ""
-          '';
-
           cmakeFlags = [
-            "-DBUILD_CONFIGURATOR=ON"
-            "-DFETCHCONTENT_SOURCE_DIR_SLINT=../slintSrc"
+            "-DBUILD_CONFIGURATOR=OFF"
           ];
 
           preInstall = ''
-            # ensure fridagum.dylib is available in build tree
             cp "$src/fridagum.dylib" "$PWD/fridagum.dylib" 2>/dev/null || true
           '';
 
           meta = with pkgs.lib; {
-            description = "Runtime tweak system for macOS Apple Silicon";
-            homepage = "https://github.com/CoreBedtime/playground";
+            description = "Runtime tweak loader for macOS Apple Silicon";
+            homepage = "https://github.com/CoreBedtime/ammonia";
             license = licenses.mit;
             maintainers = [ ];
             platforms = [ "aarch64-darwin" ];
@@ -75,16 +44,14 @@
         };
       in
       {
-        packages.default = plugin-playground;
-        packages.plugin-playground = plugin-playground;
+        packages.default = ammonia;
+        packages.ammonia = ammonia;
 
         devShells.default = pkgs.mkShell {
-          inputsFrom = [ plugin-playground ];
+          inputsFrom = [ ammonia ];
           buildInputs = with pkgs; [
             clang-tools
             git
-            cargo
-            rustc
           ];
         };
       }
@@ -92,14 +59,14 @@
       darwinModules.default = { config, lib, pkgs, ... }:
         with lib;
         let
-          cfg = config.services.plugin-playground;
+          cfg = config.services.ammonia;
         in {
-          options.services.plugin-playground = {
-            enable = mkEnableOption "Plugin Playground runtime tweak system";
+          options.services.ammonia = {
+            enable = mkEnableOption "Ammonia runtime tweak loader";
             package = mkOption {
               type = types.package;
               default = self.packages.${pkgs.system}.default;
-              description = "The pluginplayground package to use.";
+              description = "The ammonia package to use.";
             };
           };
 
@@ -107,25 +74,24 @@
             environment.systemPackages = [ cfg.package ];
 
             system.activationScripts.preUserActivation.text = ''
-              sudo mkdir -p /opt/pluginplayground/tweaks
-              sudo mkdir -p /opt/pluginplayground/lib
-              sudo mkdir -p /var/log/pluginplayground
-              sudo chmod 755 /opt/pluginplayground/tweaks
-              sudo chmod 755 /opt/pluginplayground/lib
-              sudo chmod 755 /var/log/pluginplayground
-              if [ ! -f /opt/pluginplayground/current.options ]; then
-                sudo touch /opt/pluginplayground/current.options
-                sudo chmod 644 /opt/pluginplayground/current.options
+              sudo mkdir -p /private/var/ammonia/core/tweaks
+              sudo mkdir -p /var/log/ammonia
+              sudo chmod 755 /private/var/ammonia/core/tweaks
+              sudo chmod 755 /var/log/ammonia
+              if [ ! -f /private/var/ammonia/core/current.options ]; then
+                sudo touch /private/var/ammonia/core/current.options
+                sudo chmod 644 /private/var/ammonia/core/current.options
               fi
             '';
 
-            launchd.daemons."com.pluginplayground.grant" = {
+            launchd.daemons."com.ammonia.inject" = {
               serviceConfig = {
-                Label = "com.pluginplayground.grant";
-                ProgramArguments = [ "${cfg.package}/bin/grant" ];
+                Label = "com.ammonia.inject";
+                ProgramArguments = [ "/private/var/ammonia/core/ammonia" ];
                 RunAtLoad = true;
-                StandardOutPath = "/var/log/pluginplayground/grant.log";
-                StandardErrorPath = "/var/log/pluginplayground/grant.err";
+                KeepAlive = { SuccessfulExit = false; };
+                StandardOutPath = "/var/log/ammonia/ammonia.log";
+                StandardErrorPath = "/var/log/ammonia/ammonia.err";
               };
             };
           };

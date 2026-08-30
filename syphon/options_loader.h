@@ -3,7 +3,6 @@
 
 typedef struct {
     bool disablePAC;
-    bool useLegacyAmmonia;
     bool pauseInjection;
 } FangsOptions;
 

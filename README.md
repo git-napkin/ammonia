@@ -1,62 +1,47 @@
 <p align="center">
-  <img src=".pics/PlainLogo.png" width="128" alt="Plugin Playground">
+  <img src=".pics/PlainLogo.png" width="128" alt="Ammonia">
 </p>
 
-# Plugin Playground
+# Ammonia
 
-An open-source runtime tweak system for macOS Apple Silicon.
+Runtime tweak loader for macOS Apple Silicon. Spawn-time `DYLD_INSERT_LIBRARIES` via a posix_spawn hook in launchd, plus a GUI for enabling tweaks.
 
 > [!WARNING]
-> System Integrity Protection (SIP) must be partially disabled. Use `csrutil enable --without debug`. This lets us access `initproc` and set hardware breakpoints on other processes. SIP only needs to allow debugging, not fully off.
+> SIP must allow debugging: `csrutil enable --without debug`. Full off is not required. The installer also turns off library validation and expects `boot-args=-arm64e_preview_abi`.
+>
+> macOS Safe Mode (`kern.safeboot` / boot-args `-x`) must leave Ammonia idle: the daemon exits 0 without injecting, infect does not hook `posix_spawn`, and opener does not load tweaks. Hold Shift at boot (Apple Silicon: Shift-click Continue in startup options) to get a clean login if a tweak panics.
 
-Plugin Playground intercepts and modifies running processes. Build runtime plugins, introspection tools, and behavior-modification tweaks with it.
+Build as **arm64e**. The GUI is `/Applications/Ammonia.app`. Core files live under `/private/var/ammonia/core/`.
 
-Plugin Playground must run as **arm64e** (the system ABI for Apple Silicon) to attach
-to launchd. If arm64e is not available on your system, toggle **Disable arm64e (PAC)** in the
-configurator. This strips PAC signing from spawned processes so injection works without the
-native arm64e ABI.
-
-The configuration app is installed to `/Applications/Plugin Playground.app`. The installer loads the grant LaunchDaemon and creates `/opt/pluginplayground/current.options`. Tweaks can be added with **Install tweak** in the Configurator, or by copying a root-owned `.dylib` into `/opt/pluginplayground/tweaks/`.
+To throw away Plugin Playground (`/opt/pluginplayground`, old grant job, old app) and start clean: `sudo sh ./uninstall.sh`, reboot, install the pkg, reboot, then `sudo make TWEAK=… install` from `tweaks/`.
 
 ![Configurator](.pics/Configurator.png)
 
 ## What tweaks do
 
-Tweaks are `.dylib` libraries injected into processes at spawn time, before `main()` runs. They can change UI rendering, alter window management, override system controls, or replace framework behavior. No modification to the target app is needed. Below are two tweaks built with the runtime:
+Tweaks are `.dylib`s inserted at spawn (`libopener` via infect in launchd). They can change drawing, window chrome, and framework behavior without patching the app on disk. SquareCorners loads in Chromium/Electron as well as AppKit apps. TransparentPictures stays AppKit-only; loginwindow gets an opaque white plate behind the lock-screen photo (that process often needs a late opener load).
 
-- **Classic Dock** replaces the modern Dock with a pre-Yosemite style (3D shelf, reflective icons, unified minimize).
+- **Classic Dock** — pre-Yosemite shelf.
 ![Classic Dock](.pics/ClassicDock.png)
-- **Classic Scrollbars** restores legacy scrollbars with up/down arrows and the classic aqua thumb.
+- **Classic Scrollbars** — arrows and aqua thumb.
 <img src=".pics/ClassicScrollbars.png" height="260" alt="Classic Scrollbars">
 
+## Build
 
-## Ammonia legacy usage
-
-The configurator's **Use legacy Ammonia tweaks folder** option loads tweaks from the old path `/private/var/ammonia/core/tweaks/` instead of `/opt/pluginplayground/tweaks/`. Useful when migrating from an existing Ammonia setup.
-
-If you use this option, disable or remove the Ammonia daemon at `/private/var/ammonia/core/ammonia` first. Otherwise Ammonia and Plugin Playground conflict over injection control. Adding or removing tweaks via the legacy folder often requires a reboot.
-
-## Build requirements
-
-- macOS Apple Silicon (ARM64)
-- Xcode Command Line Tools (`xcode-select --install`)
-- CMake 3.16+
-- git
-- Internet connection (first build fetches Slint via FetchContent)
-
-## Build and install
+- macOS Apple Silicon
+- Xcode CLT, CMake 3.16+, git
+- Swift 5.9+ (included with Xcode CLT) for the GUI
 
 ```sh
 sh ./install.sh
 ```
 
-Produces `PluginPlayground-1.0.0.pkg`. Run the `.pkg` to install. The package copies the grant LaunchDaemon plist, bootstraps it, and writes `current.options` if it is missing. Uninstall with `./uninstall.sh`.
+Produces `Ammonia-1.0.0.pkg`. Uninstall: `./uninstall.sh`.
 
-## Documentation
+## Docs
 
-- [Ammonia (legacy)](docs/ammonia.md)
+- [Injection (ammonia binary)](docs/grant.md)
+- [Infect hook](docs/fangs.md)
+- [GUI](docs/configurator.md)
+- [defaults](docs/defaults.md)
 - [Compilation](docs/compilation.md)
-- [Configurator](docs/configurator.md)
-- [Defaults CLI](docs/defaults.md)
-- [Fangs](docs/fangs.md)
-- [Grant](docs/grant.md)

@@ -1,7 +1,10 @@
+/* Not in the default CMake build. PID 1 payload is libinfect.m — this
+ * file panicked launchd on Darwin 27. PAC-strip experiments only. */
 #include "envbuf.h"
 #include "exe.h"
 #include "options_loader.h"
 #include "tweak_utils.h"
+#include "frida-gum.h"
 #include <ctype.h>
 #include <dlfcn.h>
 #include <errno.h>
@@ -20,9 +23,9 @@
 #include <dispatch/dispatch.h>
 #include <os/lock.h>
 
-#define SUPPORT_PATH "/opt/pluginplayground/"
-#define OPENER_DYLIB SUPPORT_PATH "lib/libplayground_opener.dylib"
-#define HOOK_DYLIB SUPPORT_PATH "lib/libfangs_hook.dylib"
+#include "ammonia.h"
+#define OPENER_DYLIB SUPPORT_PATH "libopener.dylib"
+#define HOOK_DYLIB SUPPORT_PATH "libinject.dylib"
 #define BLACKLIST_PATH SUPPORT_PATH "ammonia.blacklist"
 #define FLAG_DISABLE_XPCPROXY SUPPORT_PATH "disable-xpcproxy"
 
@@ -361,83 +364,48 @@ __attribute__((constructor)) static void fangs_hook_init(void) {
         syslog(LOG_WARNING,
                "fangs_hook: posix_spawnattr_get_darwin_role_np not found");
 
-    void *gum = dlopen(SUPPORT_PATH "lib/fridagum.dylib",
-                       RTLD_NOW | RTLD_GLOBAL);
-    if (!gum) {
-        syslog(LOG_ERR, "fangs_hook: failed to load fridagum.dylib: %s",
-               dlerror());
-        return;
-    }
-
-    void (*gum_init)(void) = (void (*)(void))dlsym(gum, "gum_init_embedded");
-    if (!gum_init) {
-        syslog(LOG_ERR, "fangs_hook: gum_init_embedded not found: %s",
-               dlerror());
-        dlclose(gum);
-        return;
-    }
-    gum_init();
-
-    void *(*gum_interceptor_obtain)(void) =
-        (void *(*)(void))dlsym(gum, "gum_interceptor_obtain");
-    if (!gum_interceptor_obtain) {
-        syslog(LOG_ERR, "fangs_hook: gum_interceptor_obtain not found: %s",
-               dlerror());
-        return;
-    }
-    void *interceptor = gum_interceptor_obtain();
-
-    typedef int (*GumInterceptorBeginTransaction_t)(void *);
-    typedef int (*GumInterceptorReplace_t)(void *, void *, void *, void *,
-                                           void *);
-    typedef int (*GumInterceptorEndTransaction_t)(void *);
-
-    GumInterceptorBeginTransaction_t gum_interceptor_begin_transaction =
-        (GumInterceptorBeginTransaction_t)dlsym(gum, "gum_interceptor_begin_transaction");
-    GumInterceptorReplace_t gum_interceptor_replace =
-        (GumInterceptorReplace_t)dlsym(gum, "gum_interceptor_replace");
-    GumInterceptorEndTransaction_t gum_interceptor_end_transaction =
-        (GumInterceptorEndTransaction_t)dlsym(gum, "gum_interceptor_end_transaction");
-
-    if (!gum_interceptor_begin_transaction ||
-        !gum_interceptor_replace || !gum_interceptor_end_transaction) {
-        syslog(LOG_ERR, "fangs_hook: failed to resolve interceptors: %s",
-               dlerror());
-        return;
-    }
-
+    /* Ammonia path: Frida is statically linked. Do not dlopen fridagum.dylib
+     * into launchd, and do not hook dlsym() PAC-signed posix_spawn pointers. */
+    gum_init_embedded();
+    GumInterceptor *interceptor = gum_interceptor_obtain();
     gum_interceptor_begin_transaction(interceptor);
 
-    void *posix_spawn_addr =
-        dlsym(RTLD_DEFAULT, "posix_spawn");
+    gpointer posix_spawn_addr =
+        (gpointer)gum_module_find_global_export_by_name("posix_spawn");
     if (posix_spawn_addr == NULL) {
-        syslog(LOG_ERR, "fangs_hook: failed to find posix_spawn");
+        syslog(LOG_ERR, "fangs_hook: failed to find export posix_spawn");
     } else {
-        int ret = gum_interceptor_replace(interceptor, posix_spawn_addr,
-                                          (void *)SpawnNew, NULL, (void *)&SpawnOld);
-        if (ret != 0 || SpawnOld == NULL)
+        GumReplaceReturn ret = gum_interceptor_replace(
+            interceptor, posix_spawn_addr, (gpointer)SpawnNew, NULL,
+            (gpointer *)&SpawnOld);
+        if (ret != GUM_REPLACE_OK || SpawnOld == NULL)
             syslog(LOG_ERR, "fangs_hook: posix_spawn replace failed (%d)",
-                   ret);
+                   (int)ret);
         else
             syslog(LOG_INFO, "fangs_hook: posix_spawn hooked");
     }
 
-    void *posix_spawnp_addr =
-        dlsym(RTLD_DEFAULT, "posix_spawnp");
+    gpointer posix_spawnp_addr =
+        (gpointer)gum_module_find_global_export_by_name("posix_spawnp");
     if (posix_spawnp_addr == NULL) {
-        syslog(LOG_ERR, "fangs_hook: failed to find posix_spawnp");
+        syslog(LOG_ERR, "fangs_hook: failed to find export posix_spawnp");
     } else {
-        int ret = gum_interceptor_replace(interceptor, posix_spawnp_addr,
-                                          (void *)SpawnPNew, NULL, (void *)&SpawnPOld);
-        if (ret != 0 || SpawnPOld == NULL)
+        GumReplaceReturn ret = gum_interceptor_replace(
+            interceptor, posix_spawnp_addr, (gpointer)SpawnPNew, NULL,
+            (gpointer *)&SpawnPOld);
+        if (ret != GUM_REPLACE_OK || SpawnPOld == NULL)
             syslog(LOG_ERR, "fangs_hook: posix_spawnp replace failed (%d)",
-                   ret);
+                   (int)ret);
         else
             syslog(LOG_INFO, "fangs_hook: posix_spawnp hooked");
     }
 
     gum_interceptor_end_transaction(interceptor);
 
-    fangs_watch_options(reload_options);
+    /* VNODE watchers and dispatch sources in PID 1 are extra risk. Ammonia's
+     * libinfect also inits once. pauseInjection is read at load; opener still
+     * watches current.options in injected UI processes. */
+    if (getpid() != 1)
+        fangs_watch_options(reload_options);
     syslog(LOG_INFO, "fangs_hook: initialized");
 }

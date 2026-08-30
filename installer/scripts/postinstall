@@ -1,12 +1,17 @@
 #!/bin/sh
 set -eu
 
-SUPPORT="/opt/pluginplayground"
-PLIST="/Library/LaunchDaemons/com.pluginplayground.grant.plist"
+SUPPORT="/private/var/ammonia/core"
+PLIST="/Library/LaunchDaemons/com.ammonia.inject.plist"
 OPTS="$SUPPORT/current.options"
 
-mkdir -p /var/log/pluginplayground
-chmod 755 "$SUPPORT/tweaks" 2>/dev/null || true
+mkdir -p /var/log/ammonia
+mkdir -p "$SUPPORT/tweaks" "$SUPPORT/gui"
+chmod 755 "$SUPPORT/tweaks" "$SUPPORT/gui" 2>/dev/null || true
+
+if [ ! -f "$SUPPORT/ammonia.blacklist" ] && [ -f "$SUPPORT/share/ammonia.blacklist" ]; then
+    cp "$SUPPORT/share/ammonia.blacklist" "$SUPPORT/ammonia.blacklist" || true
+fi
 
 if [ ! -f "$OPTS" ]; then
     cat > "$OPTS" <<'EOF'
@@ -15,8 +20,6 @@ if [ ! -f "$OPTS" ]; then
 <plist version="1.0">
 <dict>
 	<key>disablePAC</key>
-	<false/>
-	<key>useLegacyAmmonia</key>
 	<false/>
 	<key>pauseInjection</key>
 	<false/>
@@ -28,10 +31,21 @@ EOF
 fi
 chmod 666 "$OPTS" 2>/dev/null || true
 
+defaults write /Library/Preferences/com.apple.security.libraryvalidation \
+    DisableLibraryValidation -bool true
+
+# Playground leftovers — do not migrate /opt; make install puts tweaks in place.
+launchctl bootout system/com.pluginplayground.grant 2>/dev/null || true
+rm -f /Library/LaunchDaemons/com.pluginplayground.grant.plist
+rm -rf /opt/pluginplayground
+rm -rf "/Applications/Plugin Playground.app"
+rm -rf /var/log/pluginplayground
+pkgutil --forget "com.pluginplayground.core" > /dev/null 2>&1 || true
+
 if [ -f "$PLIST" ]; then
     chown root:wheel "$PLIST"
     chmod 644 "$PLIST"
-    launchctl bootout system/com.pluginplayground.grant 2>/dev/null || true
+    launchctl bootout system/com.ammonia.inject 2>/dev/null || true
     if ! launchctl bootstrap system "$PLIST"; then
         launchctl load "$PLIST"
     fi

@@ -2,14 +2,15 @@
 <html>
 <head><meta charset="utf-8"/><title>Welcome</title></head>
 <body style="font-family: -apple-system, Helvetica, Arial, sans-serif; font-size: 11px; margin: 20px;">
-<h2>Plugin Playground</h2>
-<p>An open-source runtime tweak system for macOS Apple Silicon. Intercepts processes via Mach exception ports and ARM64 hardware breakpoints for plugins, introspection, and behavior-modification tweaks.</p>
+<h2>Ammonia</h2>
+<p>Runtime tweak loader for macOS Apple Silicon. Hooks posix_spawn inside launchd and loads enabled .dylib tweaks into UI apps, including sandboxed ones.</p>
 <h3>Includes</h3>
 <table>
-<tr><td><code>bin/fangs</code></td><td>Core runtime modifier</td></tr>
-<tr><td><code>bin/grant</code></td><td>Initializer for core runtime</td></tr>
-<tr><td><code>Plugin Playground.app</code></td><td>GUI for managing tweaks (in <code>/Applications</code>)</td></tr>
-<tr><td><code>tweaks/</code></td><td>User-owned directory for tweak bundles</td></tr>
+<tr><td><code>ammonia</code></td><td>Injector (one-shot LaunchDaemon)</td></tr>
+<tr><td><code>libinject.dylib</code></td><td>posix_spawn hook in launchd</td></tr>
+<tr><td><code>libopener.dylib</code></td><td>Per-process tweak loader</td></tr>
+<tr><td><code>Ammonia.app</code></td><td>GUI in /Applications</td></tr>
+<tr><td><code>tweaks/</code></td><td>/private/var/ammonia/core/tweaks</td></tr>
 </table>
 </body>
 </html>

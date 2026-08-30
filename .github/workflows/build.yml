@@ -23,8 +23,8 @@ jobs:
           cmake --build Build -j8
       - name: Verify artifacts
         run: |
-          test -f Build/libfangs_hook.dylib
-          test -f Build/libplayground_opener.dylib
-          test -f Build/grant
+          test -f Build/libinject.dylib
+          test -f Build/libopener.dylib
+          test -f Build/ammonia
       - name: Unit tests
         run: ctest --test-dir Build --output-on-failure

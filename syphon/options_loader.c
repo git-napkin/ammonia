@@ -9,10 +9,10 @@
 #include <syslog.h>
 #include <unistd.h>
 
-#define OPTIONS_PATH "/opt/pluginplayground/current.options"
+#define OPTIONS_PATH "/private/var/ammonia/core/current.options"
 
 FangsOptions fangs_load_options(void) {
-    FangsOptions opts = {false, false, false};
+    FangsOptions opts = {false, false};
     CFDictionaryRef dict = fangs_read_plist_dictionary(OPTIONS_PATH);
     if (!dict)
         return opts;
@@ -21,10 +21,6 @@ FangsOptions fangs_load_options(void) {
     val = (CFBooleanRef)CFDictionaryGetValue(dict, CFSTR("disablePAC"));
     if (val && CFGetTypeID(val) == CFBooleanGetTypeID())
         opts.disablePAC = (bool)CFBooleanGetValue(val);
-
-    val = (CFBooleanRef)CFDictionaryGetValue(dict, CFSTR("useLegacyAmmonia"));
-    if (val && CFGetTypeID(val) == CFBooleanGetTypeID())
-        opts.useLegacyAmmonia = (bool)CFBooleanGetValue(val);
 
     val = (CFBooleanRef)CFDictionaryGetValue(dict, CFSTR("pauseInjection"));
     if (val && CFGetTypeID(val) == CFBooleanGetTypeID())

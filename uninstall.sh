@@ -1,36 +1,42 @@
 #!/bin/sh
 set -eu
 
-echo "[-] Uninstalling Plugin Playground..."
+echo "[-] Uninstalling Ammonia and leftover Plugin Playground files..."
 
 if [ "$(id -u)" -ne 0 ]; then
     echo "Elevating privileges to uninstall system-wide files..."
     exec sudo "$0" "$@"
 fi
 
-echo "Pausing injection to stop new spawns from referencing deleted dylibs..."
-if [ -f "/opt/pluginplayground/current.options" ]; then
-    defaults write /opt/pluginplayground/current.options pauseInjection -bool true
+echo "Pausing injection..."
+if [ -f "/private/var/ammonia/core/current.options" ]; then
+    defaults write /private/var/ammonia/core/current.options pauseInjection -bool true
 fi
 
-echo "Unloading grant daemon..."
+echo "Unloading daemons..."
+launchctl bootout system/com.ammonia.inject 2>/dev/null || true
 launchctl bootout system/com.pluginplayground.grant 2>/dev/null || true
 sleep 1
 
-echo "Removing Configurator application..."
+echo "Removing GUI..."
+rm -rf "/Applications/Ammonia.app"
 rm -rf "/Applications/Plugin Playground.app"
 
-echo "Removing core binaries and data..."
+echo "Removing core..."
+rm -rf "/private/var/ammonia"
 rm -rf "/opt/pluginplayground"
 
-echo "Removing launch daemon..."
+echo "Removing launch daemons..."
+rm -f "/Library/LaunchDaemons/com.ammonia.inject.plist"
 rm -f "/Library/LaunchDaemons/com.pluginplayground.grant.plist"
 
-echo "Removing log files..."
+echo "Removing logs..."
+rm -rf "/var/log/ammonia"
 rm -rf "/var/log/pluginplayground"
 
-echo "Forgetting package receipt..."
+echo "Forgetting package receipts..."
+pkgutil --forget "com.ammonia.core" > /dev/null 2>&1 || true
 pkgutil --forget "com.pluginplayground.core" > /dev/null 2>&1 || true
 
 echo "[-] Uninstallation complete."
-echo "    A reboot is recommended to fully deactivate any injected code."
+echo "    Reboot before installing Ammonia again so launchd is clean."

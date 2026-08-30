@@ -1,4 +1,7 @@
 #include "../syphon/tweak_utils.h"
+#include <fcntl.h>
+#include <mach-o/loader.h>
+#include <mach/machine.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -123,6 +126,84 @@ static void test_should_load_tweak(void) {
     PASS;
 }
 
+static int write_min_macho_with_appkit(const char *path, off_t total_size) {
+    struct mach_header_64 mh;
+    memset(&mh, 0, sizeof(mh));
+    mh.magic = MH_MAGIC_64;
+    mh.cputype = CPU_TYPE_ARM64;
+    mh.cpusubtype = CPU_SUBTYPE_ARM64_ALL;
+    mh.filetype = MH_EXECUTE;
+    mh.ncmds = 1;
+
+    const char *lib =
+        "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit";
+    size_t namelen = strlen(lib) + 1;
+    uint32_t name_off = (uint32_t)sizeof(struct dylib_command);
+    uint32_t cmdsize = (uint32_t)((name_off + namelen + 7u) & ~7u);
+    mh.sizeofcmds = cmdsize;
+
+    int fd = open(path, O_CREAT | O_TRUNC | O_WRONLY, 0644);
+    if (fd < 0)
+        return -1;
+    if (write(fd, &mh, sizeof(mh)) != (ssize_t)sizeof(mh)) {
+        close(fd);
+        return -1;
+    }
+
+    struct dylib_command dc;
+    memset(&dc, 0, sizeof(dc));
+    dc.cmd = LC_LOAD_DYLIB;
+    dc.cmdsize = cmdsize;
+    dc.dylib.name.offset = name_off;
+    if (write(fd, &dc, sizeof(dc)) != (ssize_t)sizeof(dc)) {
+        close(fd);
+        return -1;
+    }
+    if (write(fd, lib, namelen) != (ssize_t)namelen) {
+        close(fd);
+        return -1;
+    }
+    size_t pad = (size_t)cmdsize - name_off - namelen;
+    char zeros[8] = {0};
+    if (pad > 0 && write(fd, zeros, pad) != (ssize_t)pad) {
+        close(fd);
+        return -1;
+    }
+    if (ftruncate(fd, total_size) != 0) {
+        close(fd);
+        return -1;
+    }
+    close(fd);
+    return 0;
+}
+
+static void test_exe_links_to_framework_large_file(void) {
+    TEST("exe_links_to_framework (file > 64MiB)");
+    char tmpl[] = "/tmp/pp_macho_fw.XXXXXX";
+    int tfd = mkstemp(tmpl);
+    ASSERT(tfd >= 0, "mkstemp");
+    close(tfd);
+
+    off_t huge = (off_t)80 * 1024 * 1024;
+    ASSERT(write_min_macho_with_appkit(tmpl, huge) == 0, "write macho");
+    ASSERT(exe_links_to_framework(tmpl, "AppKit"), "AppKit in oversized file");
+    ASSERT(!exe_links_to_framework(tmpl, "SpriteKit"), "missing framework");
+    unlink(tmpl);
+    PASS;
+}
+
+static void test_safe_boot_bootargs(void) {
+    TEST("ammonia_bootargs_has_safe_mode");
+    ASSERT(!ammonia_bootargs_has_safe_mode(NULL), "null");
+    ASSERT(!ammonia_bootargs_has_safe_mode(""), "empty");
+    ASSERT(ammonia_bootargs_has_safe_mode("-x"), "bare -x");
+    ASSERT(ammonia_bootargs_has_safe_mode("-arm64e_preview_abi -x"), "trailing");
+    ASSERT(ammonia_bootargs_has_safe_mode("-x -v"), "leading");
+    ASSERT(!ammonia_bootargs_has_safe_mode("-xhigh"), "not a prefix of another flag");
+    ASSERT(!ammonia_bootargs_has_safe_mode("-arm64e_preview_abi"), "normal args");
+    PASS;
+}
+
 int main(void) {
     printf("tweak_utils tests:\n");
     test_path_ends_with();
@@ -132,6 +213,8 @@ int main(void) {
     test_is_tweak_safe();
     test_check_list_match_no_file();
     test_should_load_tweak();
+    test_exe_links_to_framework_large_file();
+    test_safe_boot_bootargs();
 
     printf("\n%d passed, %d failed\n", tests_pass, tests_fail);
     return tests_fail > 0 ? 1 : 0;

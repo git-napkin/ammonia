@@ -2,16 +2,12 @@
 <html>
 <head><meta charset="utf-8"/><title>Installed</title></head>
 <body style="font-family: -apple-system, Helvetica, Arial, sans-serif; font-size: 11px; margin: 20px;">
-<h2>Installation Complete</h2>
-<p>Plugin Playground has been installed to <code>/opt/pluginplayground</code>.</p>
-<h3>Start exploring</h3>
+<h2>Installation complete</h2>
+<p>Ammonia is installed at <code>/private/var/ammonia/core</code>. The GUI is <code>/Applications/Ammonia.app</code>.</p>
+<p>A reboot is the clean way for launchd to pick up the inject job. Already-running apps need a restart for tweaks.</p>
 <pre style="background: #f5f5f5; padding: 10px; border-radius: 4px;">
-# Initialize the core runtime
-sudo /opt/pluginplayground/bin/grant
-
-# Launch the tweak configurator GUI (from Applications)
-open /Applications/Plugin\ Playground.app
+open /Applications/Ammonia.app
+defaults read /private/var/ammonia/core/current.options
 </pre>
-
 </body>
 </html>

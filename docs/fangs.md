@@ -1,15 +1,9 @@
-# Fangs hook
+# Infect (`libinject.dylib`)
 
-A Frida-Gum interceptor library (`libfangs_hook.dylib`) injected into launchd at runtime. Intercepts `posix_spawn`/`posix_spawnp` calls and injects the tweak loader into child UI processes.
+Stock Ammonia hook, built from `syphon/libinfect.m`. Injected into launchd. Statically links Frida-Gum. Does not `dlopen` `fridagum.dylib` into PID 1.
 
-1. Loads Frida-Gum embedded runtime (`gum_init_embedded`).
-2. Replaces `posix_spawn` and `posix_spawnp` with wrappers via `gum_interceptor_replace`.
-3. On spawn, filters by darwin role to identify UI processes.
-4. Skips blacklisted processes (loaded from `ammonia.blacklist`).
-5. Detects and skips Node.js SEA (Single Executable Application) binaries.
-6. Propagates itself into `xpcproxy` children for recursive hook coverage.
-7. Injects `DYLD_INSERT_LIBRARIES=libplayground_opener.dylib` into eligible processes.
+Constructor: `gum_init_embedded`, `gum_module_find_global_export_by_name("posix_spawn"|"posix_spawnp")`, `gum_interceptor_replace`. Same contract as [Frida Gum interceptor replace](https://github.com/frida/frida-gum).
 
-Loaded automatically inside launchd by the `grant` daemon's shellcode injection. Required, no opt-out.
+On spawn: UI darwin-role processes get `DYLD_INSERT_LIBRARIES=libopener.dylib`. `xpcproxy` gets `libinject.dylib`. `loginwindow` is always inserted (account pictures). If loginwindow already started before infect hooked `posix_spawn`, `ammonia` late-loads opener into that process once. Drivers, Node SEA, and `ammonia.blacklist` are skipped (Dock, WallpaperAgent, WindowServer). Safe boot (`kern.safeboot` or boot-args `-x`) leaves posix_spawn unhooked. Logs to `/private/var/ammonia/core/infect.log`.
 
-`libfangs_hook.dylib` and `fridagum.dylib` are ad-hoc signed (`CodeDirectory flags=0x2`). That signature does not set `CS_LIBRARY_VALIDATION`, which is what `gum_interceptor_replace` needs on the dyld shared cache on macOS 26. Entitlement blobs do not embed on these dylibs. `grant` is signed with `Master.entitlements`, including `com.apple.security.cs.disable-library-validation`.
+Not linked: Security.framework, tweak_utils, options watcher, syslog in the constructor. Linker-signed ad-hoc (no `codesign -s -` post-build). Playground copies that post-signed Frida into launchd panicked Darwin 27.

@@ -9,8 +9,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/mman.h>
 #include <sys/stat.h>
+#include <sys/sysctl.h>
 #include <unistd.h>
 
 bool path_ends_with(const char *path, const char *name) {
@@ -40,6 +40,36 @@ bool check_file_read(FILE *f, void *buf, size_t len) {
 
 uint32_t swap32_if(uint32_t val, bool swap) {
     return swap ? OSSwapBigToHostInt32(val) : val;
+}
+
+bool ammonia_bootargs_has_safe_mode(const char *args) {
+    if (!args)
+        return false;
+    const char *p = args;
+    while (*p) {
+        while (*p == ' ' || *p == '\t')
+            p++;
+        if (p[0] == '-' && p[1] == 'x' &&
+            (p[2] == '\0' || p[2] == ' ' || p[2] == '\t'))
+            return true;
+        while (*p && *p != ' ' && *p != '\t')
+            p++;
+    }
+    return false;
+}
+
+bool ammonia_in_safe_boot(void) {
+    int sb = 0;
+    size_t n = sizeof(sb);
+    if (sysctlbyname("kern.safeboot", &sb, &n, NULL, 0) == 0 && sb != 0)
+        return true;
+    char args[1024];
+    n = sizeof(args);
+    if (sysctlbyname("kern.bootargs", args, &n, NULL, 0) != 0)
+        return false;
+    if (n >= sizeof(args))
+        args[sizeof(args) - 1] = '\0';
+    return ammonia_bootargs_has_safe_mode(args);
 }
 
 bool macho_has_framework(const char *base, size_t size, const char *framework) {
@@ -97,86 +127,136 @@ bool macho_has_framework(const char *base, size_t size, const char *framework) {
     return false;
 }
 
-static struct {
-    char path[PATH_MAX];
-    void *map;
-    size_t size;
-} s_exe_map;
+#define MAX_LOAD_COMMANDS (16u * 1024u * 1024u)
+#define MAX_FAT_ARCH 16
 
-static void unmap_exe(void) {
-    if (s_exe_map.map && s_exe_map.map != MAP_FAILED)
-        munmap(s_exe_map.map, s_exe_map.size);
-    s_exe_map.map = NULL;
-    s_exe_map.size = 0;
-    s_exe_map.path[0] = '\0';
+static bool pread_all(int fd, off_t off, void *buf, size_t n) {
+    char *p = buf;
+    while (n > 0) {
+        ssize_t r = pread(fd, p, n, off);
+        if (r <= 0)
+            return false;
+        p += r;
+        off += r;
+        n -= (size_t)r;
+    }
+    return true;
 }
 
-static bool mapped_links_to_framework(const void *mapped, size_t size,
-                                      const char *framework) {
-    uint32_t magic = *(const uint32_t *)mapped;
-    if (magic == FAT_MAGIC || magic == FAT_CIGAM) {
-        if (size < sizeof(struct fat_header))
+static bool macho_slice_links_to_framework(int fd, off_t slice_off,
+                                           size_t slice_size,
+                                           const char *framework) {
+    uint32_t magic;
+    if (slice_size < sizeof(magic) ||
+        !pread_all(fd, slice_off, &magic, sizeof(magic)))
+        return false;
+
+    bool swap = (magic == MH_CIGAM_64 || magic == MH_CIGAM);
+    uint32_t sizeofcmds = 0;
+    size_t header_size = 0;
+
+    if (magic == MH_MAGIC_64 || magic == MH_CIGAM_64) {
+        struct mach_header_64 mh;
+        if (slice_size < sizeof(mh) ||
+            !pread_all(fd, slice_off, &mh, sizeof(mh)))
             return false;
-        const struct fat_header *fh = (const struct fat_header *)mapped;
-        uint32_t narch = OSSwapBigToHostInt32(fh->nfat_arch);
-        size_t arches_size = (size_t)narch * sizeof(struct fat_arch);
-        if (size < sizeof(struct fat_header) + arches_size)
+        sizeofcmds = swap32_if(mh.sizeofcmds, swap);
+        header_size = sizeof(mh);
+    } else if (magic == MH_MAGIC || magic == MH_CIGAM) {
+        struct mach_header mh;
+        if (slice_size < sizeof(mh) ||
+            !pread_all(fd, slice_off, &mh, sizeof(mh)))
             return false;
-        const struct fat_arch *archs =
-            (const struct fat_arch *)((const char *)mapped +
-                                      sizeof(struct fat_header));
-        for (uint32_t i = 0; i < narch; i++) {
-            uint32_t offset = OSSwapBigToHostInt32(archs[i].offset);
-            if (offset >= size)
-                continue;
-            if (macho_has_framework((const char *)mapped + offset,
-                                    size - offset, framework))
-                return true;
-        }
+        sizeofcmds = swap32_if(mh.sizeofcmds, swap);
+        header_size = sizeof(mh);
+    } else {
         return false;
     }
-    return macho_has_framework((const char *)mapped, size, framework);
+
+    if (sizeofcmds == 0 || sizeofcmds > MAX_LOAD_COMMANDS)
+        return false;
+    if (header_size + (size_t)sizeofcmds > slice_size)
+        return false;
+
+    size_t blob = header_size + (size_t)sizeofcmds;
+    char *buf = malloc(blob);
+    if (!buf)
+        return false;
+    bool ok = pread_all(fd, slice_off, buf, blob) &&
+              macho_has_framework(buf, blob, framework);
+    free(buf);
+    return ok;
 }
 
-static os_unfair_lock s_exe_map_lock = OS_UNFAIR_LOCK_INIT;
+static bool fd_links_to_framework(int fd, size_t file_size,
+                                  const char *framework) {
+    uint32_t magic;
+    if (file_size < sizeof(magic) || !pread_all(fd, 0, &magic, sizeof(magic)))
+        return false;
+
+    if (magic == FAT_MAGIC || magic == FAT_CIGAM) {
+        struct fat_header fh;
+        if (file_size < sizeof(fh) || !pread_all(fd, 0, &fh, sizeof(fh)))
+            return false;
+        uint32_t narch = OSSwapBigToHostInt32(fh.nfat_arch);
+        if (narch == 0 || narch > MAX_FAT_ARCH)
+            return false;
+        size_t arches_size = (size_t)narch * sizeof(struct fat_arch);
+        if (file_size < sizeof(fh) + arches_size)
+            return false;
+        struct fat_arch *archs = malloc(arches_size);
+        if (!archs)
+            return false;
+        if (!pread_all(fd, (off_t)sizeof(fh), archs, arches_size)) {
+            free(archs);
+            return false;
+        }
+        bool found = false;
+        for (uint32_t i = 0; i < narch && !found; i++) {
+            uint32_t offset = OSSwapBigToHostInt32(archs[i].offset);
+            uint32_t size = OSSwapBigToHostInt32(archs[i].size);
+            if ((size_t)offset >= file_size)
+                continue;
+            size_t slice = size;
+            if ((size_t)offset + slice > file_size)
+                slice = file_size - (size_t)offset;
+            found = macho_slice_links_to_framework(fd, (off_t)offset, slice,
+                                                   framework);
+        }
+        free(archs);
+        return found;
+    }
+
+    return macho_slice_links_to_framework(fd, 0, file_size, framework);
+}
+
+bool process_has_framework(const char *framework) {
+    if (!framework || !*framework)
+        return false;
+    char pattern[PATH_MAX];
+    snprintf(pattern, sizeof(pattern), "/%s.framework/", framework);
+    uint32_t n = _dyld_image_count();
+    for (uint32_t i = 0; i < n; i++) {
+        const char *name = _dyld_get_image_name(i);
+        if (name && strstr(name, pattern))
+            return true;
+    }
+    return false;
+}
 
 bool exe_links_to_framework(const char *exe_path, const char *framework) {
     if (!exe_path || !framework)
         return false;
-
-    os_unfair_lock_lock(&s_exe_map_lock);
-    if (!s_exe_map.map || strcmp(s_exe_map.path, exe_path) != 0) {
-        unmap_exe();
-        int fd = open(exe_path, O_RDONLY | O_NOFOLLOW);
-        if (fd < 0) {
-            os_unfair_lock_unlock(&s_exe_map_lock);
-            return false;
-        }
-        struct stat st;
-        if (fstat(fd, &st) < 0 || !S_ISREG(st.st_mode) || st.st_size <= 0) {
-            close(fd);
-            os_unfair_lock_unlock(&s_exe_map_lock);
-            return false;
-        }
-        size_t size = (size_t)st.st_size;
-        if (size > 64u * 1024u * 1024u) {
-            close(fd);
-            os_unfair_lock_unlock(&s_exe_map_lock);
-            return false;
-        }
-        void *mapped = mmap(NULL, size, PROT_READ, MAP_PRIVATE, fd, 0);
+    int fd = open(exe_path, O_RDONLY | O_NOFOLLOW);
+    if (fd < 0)
+        return false;
+    struct stat st;
+    if (fstat(fd, &st) < 0 || !S_ISREG(st.st_mode) || st.st_size <= 0) {
         close(fd);
-        if (mapped == MAP_FAILED) {
-            os_unfair_lock_unlock(&s_exe_map_lock);
-            return false;
-        }
-        snprintf(s_exe_map.path, sizeof(s_exe_map.path), "%s", exe_path);
-        s_exe_map.map = mapped;
-        s_exe_map.size = size;
+        return false;
     }
-
-    bool result = mapped_links_to_framework(s_exe_map.map, s_exe_map.size, framework);
-    os_unfair_lock_unlock(&s_exe_map_lock);
+    bool result = fd_links_to_framework(fd, (size_t)st.st_size, framework);
+    close(fd);
     return result;
 }
 
@@ -303,7 +383,7 @@ CFDictionaryRef fangs_read_plist_dictionary(const char *path) {
 
 static void load_enabled_cache(void) {
     CFDictionaryRef dict = fangs_read_plist_dictionary(
-        "/opt/pluginplayground/current.options");
+        "/private/var/ammonia/core/current.options");
     if (!dict) return;
 
     CFArrayRef arr = (CFArrayRef)CFDictionaryGetValue(dict, CFSTR("enabledTweaks"));
@@ -380,7 +460,8 @@ bool check_dylib_options(const char *dir, const char *name, const char *exe) {
                 char fname[256];
                 CFStringGetCString(str, fname, sizeof(fname),
                                    kCFStringEncodingUTF8);
-                if (exe_links_to_framework(exe, fname)) {
+                if (exe_links_to_framework(exe, fname) ||
+                    process_has_framework(fname)) {
                     should_load = true;
                     break;
                 }

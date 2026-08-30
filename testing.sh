@@ -1,10 +1,10 @@
 #!/bin/bash
 set -euo pipefail
 
-SUPPORT="/opt/pluginplayground"
+SUPPORT="/private/var/ammonia/core"
 TWEAKS="$SUPPORT/tweaks"
 OPTS="$SUPPORT/current.options"
-RESULTS="$HOME/pluginplayground_test_results.txt"
+RESULTS="$HOME/ammonia_test_results.txt"
 SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WHITELISTED=(Terminal Finder Dock Safari)
 
@@ -46,21 +46,21 @@ json.dump(d, sys.stdout)
 trap cleanup EXIT INT TERM
 
 echo ""
-echo "Plugin Playground capability test suite"
+echo "Ammonia capability test suite"
 echo ""
 
-echo "1) Checking Plugin Playground installation..."
-for d in "$SUPPORT" "$SUPPORT/lib" "$TWEAKS"; do
+echo "1) Checking Ammonia installation..."
+for d in "$SUPPORT" "$TWEAKS"; do
     if [ ! -d "$d" ]; then
         echo "   FAIL: $d does not exist"
-        echo "   Install playground first: sudo ./install.sh"
+        echo "   Install ammonia first: sudo ./install.sh"
         exit 1
     fi
 done
-for f in "$SUPPORT/lib/libfangs_hook.dylib" \
-         "$SUPPORT/lib/libplayground_opener.dylib" \
-         "$SUPPORT/lib/fridagum.dylib" \
-         "$SUPPORT/bin/grant" \
+for f in "$SUPPORT/libinject.dylib" \
+         "$SUPPORT/libopener.dylib" \
+         "$SUPPORT/fridagum.dylib" \
+         "$SUPPORT/ammonia" \
          "$OPTS"; do
     if [ ! -f "$f" ]; then
         echo "   FAIL: $f not found"
@@ -71,12 +71,12 @@ echo "   Infrastructure OK"
 
 echo ""
 echo "2) Checking LaunchDaemon..."
-if ! launchctl list com.pluginplayground.grant &>/dev/null; then
-    echo "   FAIL: grant LaunchDaemon not loaded"
-    echo "   Install playground first: sudo ./install.sh"
+if ! launchctl list com.ammonia.inject &>/dev/null; then
+    echo "   FAIL: ammonia LaunchDaemon not loaded"
+    echo "   Install ammonia first: sudo ./install.sh"
     exit 1
 fi
-echo "   LaunchDaemon OK (grant loaded)"
+echo "   LaunchDaemon OK (ammonia loaded)"
 
 echo ""
 echo "3) Building testing tweak..."
@@ -115,7 +115,7 @@ TARGET=""
 for name in "${WHITELISTED[@]}"; do
     pid=$(pgrep -x "$name" 2>/dev/null || true)
     if [ -z "$pid" ]; then continue; fi
-    if lsof -p "$pid" 2>/dev/null | grep -q "libplayground_opener"; then
+    if lsof -p "$pid" 2>/dev/null | grep -q "libopener"; then
         TARGET="$name (PID $pid)"
         echo "   Sending SIGUSR1 to $name (PID $pid)"
         kill -SIGUSR1 "$pid" 2>/dev/null || true
@@ -124,7 +124,7 @@ for name in "${WHITELISTED[@]}"; do
 done
 
 if [ -z "$TARGET" ]; then
-    echo "   No whitelisted process with playground_opener loaded found."
+    echo "   No whitelisted process with libopener loaded found."
     echo "   Launch a whitelisted app (e.g. Terminal) and re-run."
     exit 1
 fi
@@ -142,7 +142,7 @@ done
 
 if [ ! -f "$RESULTS" ]; then
     echo "   FAIL: no results file after 30 seconds."
-    echo "   Check /var/log/system.log for playground_opener errors."
+    echo "   Check syslog for opener errors."
     exit 1
 fi
 

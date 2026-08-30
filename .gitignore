@@ -7,6 +7,8 @@ compile_commands.json
 *.dSYM/
 *.pkg
 
+gui/.build/
+
 # Testing tweak build artifact (built via make -C testing/)
 testing/testing.dylib
 
@@ -15,6 +17,7 @@ testing/testing.dylib
 libfrida-gum-arm64e-arm64.a
 fridagum.dylib
 syphon/frida-gum.h
+include/frida-gum.h
 
 # Nix
 result

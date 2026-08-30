@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <installer-gui-script minSpecVersion="2">
-    <title>Plugin Playground</title>
-    <organization>com.pluginplayground</organization>
+    <title>Ammonia</title>
+    <organization>com.ammonia</organization>
     <domains enable_anywhere="false" enable_currentUserHome="false" enable_localSystem="true"/>
     <options customize="never" allow-external-scripts="no" rootVolumeOnly="true" hostArchitectures="arm64"/>
     <welcome file="welcome.html" mime-type="text/html"/>
@@ -9,12 +9,12 @@
     <conclusion file="conclusion.html" mime-type="text/html"/>
     <background file="background.png" mime-type="image/png" alignment="bottomleft" scaling="none"/>
     <background-darkAqua file="background-dark.png" mime-type="image/png" alignment="bottomleft" scaling="none"/>
-    <pkg-ref id="com.pluginplayground.core"/>
+    <pkg-ref id="com.ammonia.core"/>
     <choices-outline>
-        <line choice="com.pluginplayground.core"/>
+        <line choice="com.ammonia.core"/>
     </choices-outline>
-    <choice id="com.pluginplayground.core" visible="false">
-        <pkg-ref id="com.pluginplayground.core"/>
+    <choice id="com.ammonia.core" visible="false">
+        <pkg-ref id="com.ammonia.core"/>
     </choice>
-    <pkg-ref id="com.pluginplayground.core" version="1.0.0" onConclusion="none">#PluginPlaygroundCore.pkg</pkg-ref>
+    <pkg-ref id="com.ammonia.core" version="1.0.0" onConclusion="none">#AmmoniaCore.pkg</pkg-ref>
 </installer-gui-script>

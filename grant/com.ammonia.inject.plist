@@ -3,10 +3,10 @@
 <plist version="1.0">
 <dict>
 	<key>Label</key>
-	<string>com.pluginplayground.grant</string>
+	<string>com.ammonia.inject</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>/opt/pluginplayground/bin/grant</string>
+		<string>/private/var/ammonia/core/ammonia</string>
 	</array>
 	<key>RunAtLoad</key>
 	<true/>
@@ -18,8 +18,8 @@
 	<key>ThrottleInterval</key>
 	<integer>10</integer>
 	<key>StandardOutPath</key>
-	<string>/var/log/pluginplayground/grant.log</string>
+	<string>/var/log/ammonia/ammonia.log</string>
 	<key>StandardErrorPath</key>
-	<string>/var/log/pluginplayground/grant.err</string>
+	<string>/var/log/ammonia/ammonia.err</string>
 </dict>
 </plist>

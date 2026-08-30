@@ -30,7 +30,9 @@ cd "$WORKDIR"
 
 tar xf "$CACHE_DIR/frida-gum-arm64e.xz" libfrida-gum.a frida-gum.h
 mv libfrida-gum.a libfrida-gum-arm64e.a
-cp frida-gum.h "$PROJECT_DIR/syphon/frida-gum.h"
+# Keep this header out of syphon/: libinfect must compile against Ammonia's
+# older Gum ABI, not 17.9.11's gum_interceptor_replace signature.
+cp frida-gum.h "$PROJECT_DIR/include/frida-gum.h"
 
 tar xf "$CACHE_DIR/frida-gum-arm64.xz" libfrida-gum.a
 mv libfrida-gum.a libfrida-gum-arm64.a

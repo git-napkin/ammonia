@@ -14,10 +14,10 @@
 #include <syslog.h>
 #include <unistd.h>
 
-#define SUPPORT_PATH "/opt/pluginplayground/"
+#include "ammonia.h"
+
 #define TWEAKS_DIR SUPPORT_PATH "tweaks/"
-#define LEGACY_TWEAKS_DIR "/private/var/ammonia/core/tweaks/"
-#define FRIDAGUM_DYLIB SUPPORT_PATH "lib/fridagum.dylib"
+#define FRIDAGUM_DYLIB SUPPORT_PATH "fridagum.dylib"
 
 static void *g_interceptor = NULL;
 static const char *tweak_base_dir = TWEAKS_DIR;
@@ -94,8 +94,12 @@ static void try_load_tweak(const char *dir, const char *d_name,
     if (!should_load_tweak(dir, d_name, exe_path))
         return;
 
-    if (!check_dylib_options(dir, d_name, exe_path))
+    if (!check_dylib_options(dir, d_name, exe_path)) {
+        syslog(LOG_INFO,
+               "opener: skip %s: frameworkDependencies not met for %s",
+               d_name, exe_path);
         return;
+    }
 
     if (!is_tweak_enabled(d_name)) {
         LoadedModule *existing = find_loaded_module(full_path);
@@ -145,6 +149,8 @@ static void try_load_tweak(const char *dir, const char *d_name,
 }
 
 static void scan_tweaks(void) {
+    if (fangs_load_options().pauseInjection)
+        return;
     os_unfair_lock_lock(&g_scan_lock);
     clear_tweak_enabled_cache();
 
@@ -177,8 +183,7 @@ static void scan_tweaks(void) {
 }
 
 static void apply_options(void) {
-    FangsOptions opts = fangs_load_options();
-    tweak_base_dir = opts.useLegacyAmmonia ? LEGACY_TWEAKS_DIR : TWEAKS_DIR;
+    tweak_base_dir = TWEAKS_DIR;
 }
 
 static void on_options_changed(void) {
@@ -205,7 +210,12 @@ static void setup_reload_handler(void) {
 }
 
 __attribute__((constructor)) static void opener_init(void) {
-    openlog("playground_opener", LOG_PID | LOG_NDELAY, LOG_DAEMON);
+    openlog("opener", LOG_PID | LOG_NDELAY, LOG_DAEMON);
+
+    if (ammonia_in_safe_boot()) {
+        syslog(LOG_NOTICE, "opener: safe boot, not loading tweaks");
+        return;
+    }
 
     void *gum = dlopen(FRIDAGUM_DYLIB, RTLD_NOW | RTLD_GLOBAL);
     if (!gum) {
@@ -233,7 +243,13 @@ __attribute__((constructor)) static void opener_init(void) {
     syslog(LOG_INFO, "opener: initializing for pid %d", getpid());
 
     apply_options();
-    scan_tweaks();
+    if (!fangs_load_options().pauseInjection) {
+        scan_tweaks();
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (!fangs_load_options().pauseInjection)
+                scan_tweaks();
+        });
+    }
     setup_reload_handler();
     fangs_watch_options(on_options_changed);
 }

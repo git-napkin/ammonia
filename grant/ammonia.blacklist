@@ -1,0 +1,8 @@
+# Global skip: infect will not insert libopener into these processes.
+# Basename suffix or full path. Dock / WallpaperAgent break the desktop.
+# loginwindow is injected on purpose (TransparentPictures); SquareCorners
+# blacklists it. Safe mode is a separate check in infect/ammonia.
+Dock
+WallpaperAgent
+WallpaperAerialsExtension
+WindowServer
