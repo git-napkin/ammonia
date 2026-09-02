@@ -251,12 +251,12 @@ static int has_sea_blob(const char *p) {
             if (lc.cmd == LC_SEGMENT_64) {
                 lseek(fd, o, SEEK_SET); struct segment_command_64 seg;
                 if (read(fd, &seg, sizeof(seg)) != sizeof(seg)) break;
-                if (strncmp(seg.segname, "__TEXT", 16) == 0) {
-                    for (uint32_t j = 0; j < seg.nsects; j++) {
-                        struct section_64 sect;
-                        if (read(fd, &sect, sizeof(sect)) != sizeof(sect)) break;
-                        if (strncmp(sect.sectname, "__NODE_SEA_BLOB", 16) == 0) found = 1;
-                    }
+                /* postject puts the SEA blob in a NODE_SEA segment, not
+                 * __TEXT, so scan every 64-bit segment's sections. */
+                for (uint32_t j = 0; j < seg.nsects; j++) {
+                    struct section_64 sect;
+                    if (read(fd, &sect, sizeof(sect)) != sizeof(sect)) break;
+                    if (strncmp(sect.sectname, "__NODE_SEA_BLOB", 16) == 0) found = 1;
                 }
             }
             lseek(fd, o + lc.cmdsize, SEEK_SET);
@@ -284,12 +284,12 @@ static int has_sea_blob_thin(int fd) {
         if (lc.cmd == LC_SEGMENT_64) {
             lseek(fd, o, SEEK_SET); struct segment_command_64 seg;
             if (read(fd, &seg, sizeof(seg)) != sizeof(seg)) return 0;
-            if (strncmp(seg.segname, "__TEXT", 16) == 0) {
-                for (uint32_t j = 0; j < seg.nsects; j++) {
-                    struct section_64 sect;
-                    if (read(fd, &sect, sizeof(sect)) != sizeof(sect)) return 0;
-                    if (strncmp(sect.sectname, "__NODE_SEA_BLOB", 16) == 0) return 1;
-                }
+            /* postject puts the SEA blob in a NODE_SEA segment, not
+             * __TEXT, so scan every 64-bit segment's sections. */
+            for (uint32_t j = 0; j < seg.nsects; j++) {
+                struct section_64 sect;
+                if (read(fd, &sect, sizeof(sect)) != sizeof(sect)) return 0;
+                if (strncmp(sect.sectname, "__NODE_SEA_BLOB", 16) == 0) return 1;
             }
         }
         lseek(fd, o + lc.cmdsize, SEEK_SET);

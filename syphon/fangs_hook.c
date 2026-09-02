@@ -131,15 +131,16 @@ static bool macho64_has_sea_blob(int fd) {
             lseek(fd, cmd_start, SEEK_SET);
             struct segment_command_64 seg;
             if (read(fd, &seg, sizeof(seg)) != sizeof(seg)) return false;
-            if (strncmp(seg.segname, "__TEXT", sizeof(seg.segname)) == 0) {
-                for (uint32_t j = 0; j < seg.nsects; j++) {
-                    struct section_64 sect;
-                    if (read(fd, &sect, sizeof(sect)) != sizeof(sect))
-                        return false;
-                    if (strncmp(sect.sectname, "__NODE_SEA_BLOB",
-                                sizeof(sect.sectname)) == 0)
-                        return true;
-                }
+
+            /* postject puts the SEA blob in a NODE_SEA segment, not __TEXT,
+             * so scan every 64-bit segment's sections. */
+            for (uint32_t j = 0; j < seg.nsects; j++) {
+                struct section_64 sect;
+                if (read(fd, &sect, sizeof(sect)) != sizeof(sect))
+                    return false;
+                if (strncmp(sect.sectname, "__NODE_SEA_BLOB",
+                            sizeof(sect.sectname)) == 0)
+                    return true;
             }
         }
         lseek(fd, cmd_start + lc.cmdsize, SEEK_SET);
