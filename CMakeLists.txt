@@ -79,6 +79,7 @@ set(SYPHON_INCLUDE_PRIVATE
 add_library(libinfect SHARED
     syphon/libinfect.m
     syphon/envbuf.c
+    syphon/macho_sea.c
 )
 set_target_properties(libinfect PROPERTIES OUTPUT_NAME inject)
 ammonia_arm64e(libinfect)
@@ -170,6 +171,10 @@ if(BUILD_TESTS)
   target_include_directories(test_tweak_utils PRIVATE ${SYPHON_INCLUDE_PRIVATE})
   target_link_libraries(test_tweak_utils PRIVATE "-framework CoreFoundation")
   add_test(NAME tweak_utils COMMAND test_tweak_utils)
+
+  add_executable(test_macho_sea test/test_macho_sea.c syphon/macho_sea.c)
+  target_include_directories(test_macho_sea PRIVATE ${SYPHON_INCLUDE_PRIVATE})
+  add_test(NAME macho_sea COMMAND test_macho_sea)
 endif()
 
 # ── Configurator ──────────────────────────────────────────────────────────

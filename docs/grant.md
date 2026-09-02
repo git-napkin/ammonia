@@ -1,6 +1,6 @@
 # ammonia (injector)
 
-Root helper at `/private/var/ammonia/core/ammonia`. With no args it `dlopen`s `libinject.dylib` into launchd using the Jeremy Legendre trampoline (same bytes as stock Ammonia; C-string size is 181 including NUL). In macOS Safe Mode (`kern.safeboot` or boot-args `-x`) it exits 0 and does nothing.
+Root helper at `/private/var/ammonia/core/ammonia`. With no args it `dlopen`s `libinject.dylib` into launchd using a mach-thread trampoline: `pthread_create_from_mach_thread`, then `pthread_join` of a helper that `dlopen`s the payload. Success is `x0 == 0x79616265` on the mach thread **and** the dylib path showing up in the target’s dyld image list. `pthread_create` / `pthread_join` / `dlopen` failure leaves `x0` unset as that sentinel. In macOS Safe Mode (`kern.safeboot` or boot-args `-x`) it exits 0 and does nothing.
 
 LaunchDaemon `com.ammonia.inject`: RunAtLoad, KeepAlive `{SuccessfulExit=false}`. A successful inject does not loop. A crash retries after ThrottleInterval. A safe-boot exit 0 does not retry.
 

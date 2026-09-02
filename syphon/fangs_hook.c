@@ -5,13 +5,10 @@
 #include "options_loader.h"
 #include "tweak_utils.h"
 #include "frida-gum.h"
+#include "macho_sea.h"
 #include <ctype.h>
 #include <dlfcn.h>
 #include <errno.h>
-#include <fcntl.h>
-#include <libkern/OSByteOrder.h>
-#include <mach-o/fat.h>
-#include <mach-o/loader.h>
 #include <spawn.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -115,39 +112,6 @@ static bool is_path_driver(const char *path) {
     return path_ends_with(path, "Driver");
 }
 
-static bool macho64_has_sea_blob(int fd) {
-    struct mach_header_64 hdr;
-    if (read(fd, &hdr, sizeof(hdr)) != sizeof(hdr)) return false;
-    if (hdr.magic != MH_MAGIC_64) return false;
-    for (uint32_t i = 0; i < hdr.ncmds; i++) {
-        off_t cmd_start = lseek(fd, 0, SEEK_CUR);
-        if (cmd_start == (off_t)-1) return false;
-        struct load_command lc;
-        if (read(fd, &lc, sizeof(lc)) != sizeof(lc)) return false;
-        if (lc.cmdsize < sizeof(struct load_command))
-            return false;
-        if (lc.cmd == LC_SEGMENT_64 && lc.cmdsize >=
-            (sizeof(struct segment_command_64))) {
-            lseek(fd, cmd_start, SEEK_SET);
-            struct segment_command_64 seg;
-            if (read(fd, &seg, sizeof(seg)) != sizeof(seg)) return false;
-
-            /* postject puts the SEA blob in a NODE_SEA segment, not __TEXT,
-             * so scan every 64-bit segment's sections. */
-            for (uint32_t j = 0; j < seg.nsects; j++) {
-                struct section_64 sect;
-                if (read(fd, &sect, sizeof(sect)) != sizeof(sect))
-                    return false;
-                if (strncmp(sect.sectname, "__NODE_SEA_BLOB",
-                            sizeof(sect.sectname)) == 0)
-                    return true;
-            }
-        }
-        lseek(fd, cmd_start + lc.cmdsize, SEEK_SET);
-    }
-    return false;
-}
-
 #define SEA_CACHE_SIZE 16
 static struct {
     dev_t dev;
@@ -158,35 +122,6 @@ static struct {
 } sea_cache[SEA_CACHE_SIZE];
 static unsigned sea_cache_next;
 static os_unfair_lock sea_cache_lock = OS_UNFAIR_LOCK_INIT;
-
-static bool is_node_sea_binary_uncached(const char *path) {
-    int fd = open(path, O_RDONLY);
-    if (fd < 0) return false;
-    uint32_t magic;
-    if (read(fd, &magic, sizeof(magic)) != sizeof(magic)) {
-        close(fd);
-        return false;
-    }
-    bool result = false;
-    if (magic == FAT_MAGIC || magic == FAT_CIGAM) {
-        struct fat_header fh;
-        lseek(fd, 0, SEEK_SET);
-        if (read(fd, &fh, sizeof(fh)) == sizeof(fh)) {
-            uint32_t narch = OSSwapBigToHostInt32(fh.nfat_arch);
-            for (uint32_t i = 0; i < narch && !result; i++) {
-                struct fat_arch arch;
-                if (read(fd, &arch, sizeof(arch)) != sizeof(arch)) break;
-                lseek(fd, OSSwapBigToHostInt32(arch.offset), SEEK_SET);
-                result = macho64_has_sea_blob(fd);
-            }
-        }
-    } else if (magic == MH_MAGIC_64) {
-        lseek(fd, 0, SEEK_SET);
-        result = macho64_has_sea_blob(fd);
-    }
-    close(fd);
-    return result;
-}
 
 static bool is_node_sea_binary(const char *path) {
     if (!path)
@@ -206,7 +141,7 @@ static bool is_node_sea_binary(const char *path) {
         }
     }
     os_unfair_lock_unlock(&sea_cache_lock);
-    bool result = is_node_sea_binary_uncached(path);
+    bool result = macho_is_node_sea_binary(path);
     os_unfair_lock_lock(&sea_cache_lock);
     unsigned slot = sea_cache_next++ % SEA_CACHE_SIZE;
     sea_cache[slot].dev = st.st_dev;

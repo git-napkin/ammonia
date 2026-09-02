@@ -29,6 +29,7 @@
 extern uint8_t grant_shellcode[];
 extern uint8_t grant_shellcode_end[];
 extern uint64_t grant_shellcode_pcfmt;
+extern uint64_t grant_shellcode_pjoin;
 extern uint64_t grant_shellcode_dlopen;
 extern uint64_t grant_shellcode_payload;
 
@@ -211,21 +212,33 @@ static int inject_dylib(pid_t pid, const char *dylib_path) {
         goto terminate;
 
     uint64_t pcfmt_address = stripped_dlsym("pthread_create_from_mach_thread");
+    uint64_t pjoin_address = stripped_dlsym("pthread_join");
     uint64_t dlopen_address = stripped_dlsym("dlopen");
-    if (pcfmt_address == 0 || dlopen_address == 0) {
-        syslog(LOG_ERR, "grant: missing dlsym(pthread_create_from_mach_thread) "
-                        "or dlopen");
+    if (pcfmt_address == 0 || pjoin_address == 0 || dlopen_address == 0) {
+        syslog(LOG_ERR,
+               "grant: missing dlsym(pthread_create_from_mach_thread, "
+               "pthread_join, or dlopen)");
         goto terminate;
     }
 
     size_t off_pcfmt =
         (size_t)((uint8_t *)&grant_shellcode_pcfmt - grant_shellcode);
+    size_t off_pjoin =
+        (size_t)((uint8_t *)&grant_shellcode_pjoin - grant_shellcode);
     size_t off_dlopen =
         (size_t)((uint8_t *)&grant_shellcode_dlopen - grant_shellcode);
     size_t off_payload =
         (size_t)((uint8_t *)&grant_shellcode_payload - grant_shellcode);
+    if (off_pcfmt + sizeof(uint64_t) > sc_len ||
+        off_pjoin + sizeof(uint64_t) > sc_len ||
+        off_dlopen + sizeof(uint64_t) > sc_len ||
+        off_payload + sizeof(uint64_t) > sc_len) {
+        syslog(LOG_ERR, "grant: shellcode slot out of range");
+        goto terminate;
+    }
     uint64_t payload_address = (uint64_t)payload_str;
     memcpy(sc + off_pcfmt, &pcfmt_address, sizeof(uint64_t));
+    memcpy(sc + off_pjoin, &pjoin_address, sizeof(uint64_t));
     memcpy(sc + off_dlopen, &dlopen_address, sizeof(uint64_t));
     memcpy(sc + off_payload, &payload_address, sizeof(uint64_t));
 
@@ -300,7 +313,8 @@ static int inject_dylib(pid_t pid, const char *dylib_path) {
                               &thread_flavor_count);
         if (kr != KERN_SUCCESS)
             goto terminate;
-        if (thread_state.__x[0] == SENTINEL) {
+        if (thread_state.__x[0] == SENTINEL &&
+            task_has_mapped(task, already)) {
             syslog(LOG_INFO, "grant: injected %s into pid %d", dylib_path,
                    (int)pid);
             result = 0;
@@ -457,11 +471,16 @@ int main(int argc, const char *argv[]) {
         printf("pthread_create_from_mach_thread %p stripped 0x%llx\n",
                dlsym(RTLD_DEFAULT, "pthread_create_from_mach_thread"),
                stripped_dlsym("pthread_create_from_mach_thread"));
+        printf("pthread_join %p stripped 0x%llx\n",
+               dlsym(RTLD_DEFAULT, "pthread_join"),
+               stripped_dlsym("pthread_join"));
         printf("dlopen %p stripped 0x%llx\n", dlsym(RTLD_DEFAULT, "dlopen"),
                stripped_dlsym("dlopen"));
-        printf("shellcode size %zu (slots pcfmt=%zu dlopen=%zu payload=%zu)\n",
+        printf("shellcode size %zu (slots pcfmt=%zu pjoin=%zu dlopen=%zu "
+               "payload=%zu)\n",
                (size_t)(grant_shellcode_end - grant_shellcode),
                (size_t)((uint8_t *)&grant_shellcode_pcfmt - grant_shellcode),
+               (size_t)((uint8_t *)&grant_shellcode_pjoin - grant_shellcode),
                (size_t)((uint8_t *)&grant_shellcode_dlopen - grant_shellcode),
                (size_t)((uint8_t *)&grant_shellcode_payload - grant_shellcode));
         return 0;

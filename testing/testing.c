@@ -20,6 +20,7 @@
 #include <pthread.h>
 #include <dirent.h>
 #include <fcntl.h>
+#include "../syphon/macho_sea.h"
 
 #define SUPPORT_PATH "/private/var/ammonia/core/"
 #define TWEAKS_DIR SUPPORT_PATH "tweaks/"
@@ -236,67 +237,6 @@ static int is_arm64e_binary(const char *p) {
     close(fd); return is_arm64e;
 }
 
-static int has_sea_blob_thin(int fd);
-
-static int has_sea_blob(const char *p) {
-    int fd = open(p, O_RDONLY); if (fd < 0) return 0;
-    uint32_t magic; if (read(fd, &magic, 4) != 4) { close(fd); return 0; }
-    int found = 0;
-    if (magic == MH_MAGIC_64 || magic == MH_MAGIC) {
-        lseek(fd, 0, SEEK_SET); struct mach_header_64 h;
-        if (read(fd, &h, sizeof(h)) != sizeof(h)) { close(fd); return 0; }
-        for (uint32_t i = 0; i < h.ncmds && !found; i++) {
-            off_t o = lseek(fd, 0, SEEK_CUR); struct load_command lc;
-            if (read(fd, &lc, sizeof(lc)) != sizeof(lc)) break;
-            if (lc.cmd == LC_SEGMENT_64) {
-                lseek(fd, o, SEEK_SET); struct segment_command_64 seg;
-                if (read(fd, &seg, sizeof(seg)) != sizeof(seg)) break;
-                /* postject puts the SEA blob in a NODE_SEA segment, not
-                 * __TEXT, so scan every 64-bit segment's sections. */
-                for (uint32_t j = 0; j < seg.nsects; j++) {
-                    struct section_64 sect;
-                    if (read(fd, &sect, sizeof(sect)) != sizeof(sect)) break;
-                    if (strncmp(sect.sectname, "__NODE_SEA_BLOB", 16) == 0) found = 1;
-                }
-            }
-            lseek(fd, o + lc.cmdsize, SEEK_SET);
-        }
-    } else if (magic == FAT_MAGIC || magic == FAT_CIGAM) {
-        struct fat_header f; lseek(fd, 0, SEEK_SET);
-        if (read(fd, &f, sizeof(f)) == sizeof(f)) {
-            uint32_t n = (magic == FAT_CIGAM) ? OSSwapBigToHostInt32(f.nfat_arch) : f.nfat_arch;
-            for (uint32_t i = 0; i < n && !found; i++) {
-                struct fat_arch a; if (read(fd, &a, sizeof(a)) != sizeof(a)) break;
-                uint32_t off = (magic == FAT_CIGAM) ? OSSwapBigToHostInt32(a.offset) : a.offset;
-                lseek(fd, off, SEEK_SET); found = has_sea_blob_thin(fd);
-            }
-        }
-    }
-    close(fd); return found;
-}
-
-static int has_sea_blob_thin(int fd) {
-    struct mach_header_64 h;
-    if (read(fd, &h, sizeof(h)) != sizeof(h) || h.magic != MH_MAGIC_64) return 0;
-    for (uint32_t i = 0; i < h.ncmds; i++) {
-        off_t o = lseek(fd, 0, SEEK_CUR); struct load_command lc;
-        if (read(fd, &lc, sizeof(lc)) != sizeof(lc)) return 0;
-        if (lc.cmd == LC_SEGMENT_64) {
-            lseek(fd, o, SEEK_SET); struct segment_command_64 seg;
-            if (read(fd, &seg, sizeof(seg)) != sizeof(seg)) return 0;
-            /* postject puts the SEA blob in a NODE_SEA segment, not
-             * __TEXT, so scan every 64-bit segment's sections. */
-            for (uint32_t j = 0; j < seg.nsects; j++) {
-                struct section_64 sect;
-                if (read(fd, &sect, sizeof(sect)) != sizeof(sect)) return 0;
-                if (strncmp(sect.sectname, "__NODE_SEA_BLOB", 16) == 0) return 1;
-            }
-        }
-        lseek(fd, o + lc.cmdsize, SEEK_SET);
-    }
-    return 0;
-}
-
 struct pthread_arg { int ran; };
 
 static void *pthread_fn(void *a) {
@@ -491,7 +431,7 @@ static void run_all_tests(void) {
     cap("PAC", "/tmp/RuntimeApplications directory exists (PAC bypass active)",
         is_pac_bypass_avail());
     {
-        int sea = exe[0] ? has_sea_blob(exe) : 0;
+        int sea = exe[0] ? macho_is_node_sea_binary(exe) : 0;
         cap("PAC", "Node SEA blob detection (negative check on self binary)", !sea);
     }
 

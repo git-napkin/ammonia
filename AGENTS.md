@@ -17,7 +17,7 @@ sh ./install.sh
 CI-style:
 
 ```sh
-sh ./setup_frida.sh   # if fridagum.dylib / libfrida-gum-arm64e-arm64.a missing
+sh ./setup_frida.sh   # if fridagum.dylib / libfrida-gum-arm64e-arm64.a missing; SHA-256 pins 17.9.11 gum-devkits
 cmake -S . -B Build -DCMAKE_BUILD_TYPE=Release -DBUILD_CONFIGURATOR=OFF
 cmake --build Build -j8
 ```
@@ -30,7 +30,8 @@ CMake: `BUILD_ARM64E` (default ON) applies to `ammonia` / `libinject` / `libopen
 
 ```
 ammonia (LaunchDaemon, one-shot, KeepAlive SuccessfulExit=false)
-  → trampoline dlopen(libinject.dylib) into launchd
+  → trampoline: pthread_create_from_mach_thread → helper dlopen → pthread_join;
+    SENTINEL in x0 only after a non-NULL handle, plus dyld image-list check
     → gum_init_embedded + gum_module_find_global_export_by_name("posix_spawn")
     → UI children / xpcproxy get DYLD_INSERT_LIBRARIES=libopener.dylib
       → opener: enabledTweaks from current.options, dlopen tweaks/
@@ -97,8 +98,8 @@ Keys: `disablePAC`, `pauseInjection`, `enabledTweaks`. `pauseInjection` stops op
 
 ## Tests
 
-`sh ./testing.sh` after install. Results: `~/ammonia_test_results.txt`.
+`sh ./testing.sh` after install. Results: `~/ammonia_test_results.txt`. CMake: `test_envbuf`, `test_tweak_utils`, `test_macho_sea` (`ctest` in `Build/`).
 
 ## Leftover source
 
-`syphon/fangs_hook.c`, `fangs_hook_lite.c`, `launchd_probe.c` are not built. PAC strip in `exe.c` is unused while infect is the launchd payload. The GUI is `gui/` (SwiftUI SPM), bundled as `configurator.app` → `/Applications/Ammonia.app`.
+`syphon/fangs_hook.c`, `fangs_hook_lite.c`, `launchd_probe.c` are not built. PAC strip in `exe.c` is unused while infect is the launchd payload. Node SEA detection is `syphon/macho_sea.c` (infect + fangs source + tests). The GUI is `gui/` (SwiftUI SPM), bundled as `configurator.app` → `/Applications/Ammonia.app`.

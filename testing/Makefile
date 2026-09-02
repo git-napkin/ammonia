@@ -1,8 +1,9 @@
 TARGET   = testing.dylib
-SRC      = testing.c
+SRC      = testing.c ../syphon/macho_sea.c
 SDK      = $(shell xcrun --sdk macosx --show-sdk-path)
 CFLAGS   = -arch arm64 -bundle -fPIC -Wall -Wextra \
            -isysroot $(SDK) \
+           -I../syphon \
            -Wl,-undefined,dynamic_lookup
 LIBS     = -framework CoreFoundation -framework Foundation
 
@@ -16,6 +17,7 @@ $(TARGET): $(SRC)
 universal:
 	clang -arch arm64e -arch arm64 -bundle -fPIC -Wall -Wextra \
 		-isysroot $(SDK) \
+		-I../syphon \
 		-Wl,-undefined,dynamic_lookup \
 		-o $(TARGET) $(SRC) $(LIBS)
 	codesign -f -s - $(TARGET)
