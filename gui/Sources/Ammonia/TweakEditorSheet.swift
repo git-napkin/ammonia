@@ -18,7 +18,7 @@ struct TweakEditorSheet: View {
                     emptyHint: "None",
                     items: $options.blacklistedApps,
                     input: $blacklistInput,
-                    placeholder: "Executable name"
+                    placeholder: "Executable name or *"
                 )
 
                 stringListSection(
@@ -31,10 +31,10 @@ struct TweakEditorSheet: View {
 
                 stringListSection(
                     title: "Process whitelist",
-                    emptyHint: "Empty loads in every process (minus blacklists).",
+                    emptyHint: "Empty loads in every process (minus blacklists). * matches all.",
                     items: $options.processWhitelist,
                     input: $whitelistInput,
-                    placeholder: "Executable name"
+                    placeholder: "Executable name or *"
                 )
             }
             .formStyle(.grouped)

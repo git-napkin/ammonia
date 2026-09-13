@@ -59,7 +59,7 @@ Tweaks live under `/private/var/ammonia/core/tweaks/` so sandboxed apps can `dlo
 - the host executable’s Mach-O load commands name that framework (header + `sizeofcmds` only — large binaries like Warp are not mmap’d whole), or
 - the framework is already mapped in the process (`_dyld_get_image_name`). Electron stubs do not link AppKit; it arrives via Electron Framework after opener’s constructor, so opener rescans on the main queue.
 
-If the sidecar is unreadable, the framework gate is skipped (`check_dylib_options` returns true). Sidecar `.whitelist` / `.blacklist` and `.options` `blacklistedApps` also filter hosts (whitelist, if present even empty, is exclusive).
+If the sidecar is unreadable, the framework / `blacklistedApps` gates are skipped. `check_dylib_options` still refuses hosts whose path contains a `Frameworks`, `PrivateFrameworks`, `libexec`, `sbin`, or `DriverExtensions` component. Sidecar `.whitelist` / `.blacklist` and `.options` `blacklistedApps` also filter hosts (whitelist, if present even empty, is exclusive). A lone `*` entry in those lists matches every process.
 
 ## Clean reinstall (drop Playground)
 

@@ -32,6 +32,8 @@ static void test_path_matches_entry(void) {
     ASSERT(!path_matches_entry("/usr/bin/foo", "/usr/bin/bar"), "full path mismatch");
     ASSERT(!path_matches_entry("/usr/bin/foo", "bar"), "basename mismatch");
     ASSERT(path_matches_entry("/usr/bin/Foo", "Foo"), "case-sensitive match");
+    ASSERT(path_matches_entry("/usr/bin/foo", "*"), "wildcard match");
+    ASSERT(path_matches_entry("/any/path", "*"), "wildcard any path");
     ASSERT(!path_matches_entry("/usr/bin/foo", ""), "empty entry");
     ASSERT(!path_matches_entry(NULL, "foo"), "null path");
     PASS;
@@ -120,8 +122,60 @@ static void test_should_load_tweak(void) {
                               "/System/Library/CoreServices/Finder.app/Contents/MacOS/Finder"),
            "blacklist hit");
 
-    unlink(dylib);
+    f = fopen(bl, "w");
+    ASSERT(f != NULL, "create wildcard blacklist");
+    fprintf(f, "*\n");
+    fclose(f);
+    ASSERT(!should_load_tweak(dir, "foo.dylib",
+                              "/Applications/Safari.app/Contents/MacOS/Safari"),
+           "wildcard blacklist denies all");
+
     unlink(bl);
+    f = fopen(wl, "w");
+    ASSERT(f != NULL, "create wildcard whitelist");
+    fprintf(f, "*\n");
+    fclose(f);
+    ASSERT(should_load_tweak(dir, "foo.dylib",
+                             "/Applications/Safari.app/Contents/MacOS/Safari"),
+           "wildcard whitelist allows all");
+    ASSERT(should_load_tweak(dir, "foo.dylib",
+                             "/System/Library/CoreServices/Finder.app/Contents/MacOS/Finder"),
+           "wildcard whitelist allows Finder");
+
+    unlink(dylib);
+    unlink(wl);
+    rmdir(dir);
+    PASS;
+}
+
+static void test_check_dylib_options_path_exclusions(void) {
+    TEST("check_dylib_options path exclusions");
+    char tmpl[] = "/tmp/pp_dylib_opts.XXXXXX";
+    char *dir = mkdtemp(tmpl);
+    ASSERT(dir != NULL, "mkdtemp");
+
+    ASSERT(check_dylib_options(dir, "foo.dylib",
+                               "/Applications/Safari.app/Contents/MacOS/Safari"),
+           "normal app allowed without options");
+    ASSERT(!check_dylib_options(
+               dir, "foo.dylib",
+               "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit"),
+           "Frameworks component excluded");
+    ASSERT(!check_dylib_options(
+               dir, "foo.dylib",
+               "/System/Library/PrivateFrameworks/Foo.framework/Foo"),
+           "PrivateFrameworks component excluded");
+    ASSERT(!check_dylib_options(dir, "foo.dylib", "/usr/libexec/xpcproxy"),
+           "libexec component excluded");
+    ASSERT(!check_dylib_options(dir, "foo.dylib", "/usr/sbin/cupsd"),
+           "sbin component excluded");
+    ASSERT(!check_dylib_options(
+               dir, "foo.dylib",
+               "/System/Library/DriverExtensions/com.apple.foo.dext/foo"),
+           "DriverExtensions component excluded");
+    ASSERT(check_dylib_options(dir, "foo.dylib", "/usr/bin/ssh"),
+           "bin not excluded");
+
     rmdir(dir);
     PASS;
 }
@@ -213,6 +267,7 @@ int main(void) {
     test_is_tweak_safe();
     test_check_list_match_no_file();
     test_should_load_tweak();
+    test_check_dylib_options_path_exclusions();
     test_exe_links_to_framework_large_file();
     test_safe_boot_bootargs();
 

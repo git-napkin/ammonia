@@ -24,9 +24,34 @@ bool path_ends_with(const char *path, const char *name) {
 
 bool path_matches_entry(const char *path, const char *entry) {
     if (!path || !entry || entry[0] == '\0') return false;
+    if (strcmp(entry, "*") == 0)
+        return true;
     if (strchr(entry, '/') != NULL)
         return (strcmp(path, entry) == 0);
     return path_ends_with(path, entry);
+}
+
+static bool exe_path_has_excluded_component(const char *exe) {
+    if (!exe || !*exe)
+        return false;
+    const char *p = exe;
+    while (*p) {
+        while (*p == '/')
+            p++;
+        if (!*p)
+            break;
+        const char *start = p;
+        while (*p && *p != '/')
+            p++;
+        size_t len = (size_t)(p - start);
+        if ((len == 10 && strncmp(start, "Frameworks", 10) == 0) ||
+            (len == 17 && strncmp(start, "PrivateFrameworks", 17) == 0) ||
+            (len == 7 && strncmp(start, "libexec", 7) == 0) ||
+            (len == 4 && strncmp(start, "sbin", 4) == 0) ||
+            (len == 16 && strncmp(start, "DriverExtensions", 16) == 0))
+            return true;
+    }
+    return false;
 }
 
 bool is_safe_filename(const char *name) {
@@ -439,6 +464,9 @@ void clear_tweak_enabled_cache(void) {
 }
 
 bool check_dylib_options(const char *dir, const char *name, const char *exe) {
+    if (exe_path_has_excluded_component(exe))
+        return false;
+
     char optpath[PATH_MAX];
     snprintf(optpath, sizeof(optpath), "%s/%s.options", dir, name);
 
