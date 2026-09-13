@@ -128,6 +128,7 @@ add_library(opener SHARED
     syphon/envbuf.c
     syphon/tweak_utils.c
     syphon/options_loader.c
+    syphon/macho_sea.c
 )
 ammonia_arm64e(opener)
 target_include_directories(opener PRIVATE ${SYPHON_INCLUDE_PRIVATE})

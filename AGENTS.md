@@ -49,6 +49,8 @@ Do not put Security, PAC strip, options watchers, or `dlopen(fridagum.dylib)` in
 
 `libinfect` is compiled against Ammonia's Gum header/ABI (`gum_interceptor_replace` is interceptor, address, replacement, replacement_data, original). Current Frida 17.9.11 docs list a different last argument. `setup_frida.sh` writes `include/frida-gum.h` for that newer SDK; do not point infect at it. CMake prefers `../legacy/ammonia/libinfect/frida-gum.h` and `../legacy/ammonia/libfrida-gum-arm64e-arm64.a`.
 
+Node SEA: infect skips adding opener on launchd UI spawns. If a SEA binary still starts with `DYLD_INSERT_LIBRARIES` (inherited from a non-launchd parent), opener’s constructor detects `__NODE_SEA_BLOB`, `unsetenv`s the insert, and returns before gum/tweaks — Node aborts when that env is still set at main.
+
 Tweaks live under `/private/var/ammonia/core/tweaks/` so sandboxed apps can `dlopen` them. There is no `/opt/pluginplayground` tree.
 
 `frameworkDependencies` in a tweak `.options` sidecar is an AppKit-style gate (TransparentPictures uses it; SquareCorners does not). It is satisfied if **either**:
@@ -102,4 +104,4 @@ Keys: `disablePAC`, `pauseInjection`, `enabledTweaks`. `pauseInjection` stops op
 
 ## Leftover source
 
-`syphon/fangs_hook.c`, `fangs_hook_lite.c`, `launchd_probe.c` are not built. PAC strip in `exe.c` is unused while infect is the launchd payload. Node SEA detection is `syphon/macho_sea.c` (infect + fangs source + tests). The GUI is `gui/` (SwiftUI SPM), bundled as `configurator.app` → `/Applications/Ammonia.app`.
+`syphon/fangs_hook.c`, `fangs_hook_lite.c`, `launchd_probe.c` are not built. PAC strip in `exe.c` is unused while infect is the launchd payload. Node SEA detection is `syphon/macho_sea.c` (infect skip-inject + opener constructor unsetenv + fangs source + tests). The GUI is `gui/` (SwiftUI SPM), bundled as `configurator.app` → `/Applications/Ammonia.app`.

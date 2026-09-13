@@ -1,5 +1,6 @@
 #include "tweak_utils.h"
 #include "options_loader.h"
+#include "macho_sea.h"
 #include <dirent.h>
 #include <dispatch/dispatch.h>
 #include <dlfcn.h>
@@ -209,6 +210,25 @@ static void setup_reload_handler(void) {
     dispatch_resume(source);
 }
 
+/* Node SEA aborts when DYLD_INSERT_LIBRARIES is still set at main(). Infect
+ * only strips for launchd-spawned SEA; parent-spawned SEA inherit the insert
+ * and load opener. Clear the env here (before gum/tweaks) so those binaries
+ * can run. */
+static bool opener_bail_if_node_sea(void) {
+    char *exe_path = get_exe_path();
+    if (!exe_path)
+        return false;
+    bool sea = macho_is_node_sea_binary(exe_path);
+    if (sea) {
+        unsetenv("DYLD_INSERT_LIBRARIES");
+        syslog(LOG_NOTICE,
+               "opener: Node SEA binary '%s', stripped DYLD_INSERT_LIBRARIES",
+               exe_path);
+    }
+    free(exe_path);
+    return sea;
+}
+
 __attribute__((constructor)) static void opener_init(void) {
     openlog("opener", LOG_PID | LOG_NDELAY, LOG_DAEMON);
 
@@ -216,6 +236,9 @@ __attribute__((constructor)) static void opener_init(void) {
         syslog(LOG_NOTICE, "opener: safe boot, not loading tweaks");
         return;
     }
+
+    if (opener_bail_if_node_sea())
+        return;
 
     void *gum = dlopen(FRIDAGUM_DYLIB, RTLD_NOW | RTLD_GLOBAL);
     if (!gum) {

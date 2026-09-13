@@ -309,12 +309,8 @@ static int spawn_with_env(int (*spawn_fn)(pid_t *, const char *,
   }
 
 Spawn:
-  if (macho_is_node_sea_binary(path)) {
-    LogToFile("ammonia: stripping DYLD_INSERT_LIBRARIES for Node.js SEA "
-              "binary '%s'\n",
-              path);
-    playground = envbuf_unsetenv(playground, "DYLD_INSERT_LIBRARIES");
-  }
+  /* Node SEA DYLD_INSERT_LIBRARIES strip lives in libopener's constructor so
+   * parent-spawned SEA (not only launchd) clear the env before Node main. */
   k = spawn_fn(pid, path, ac, ab, __argv, (char *const *)playground);
   envbuf_free(playground);
   return k;
