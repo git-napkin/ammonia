@@ -1,5 +1,5 @@
 # PAC stripping
 
-`syphon/exe.c` can rewrite arm64e app copies under `/tmp/RuntimeApplications/` when `disablePAC` is set **and** a spawn hook calls `getready_process()`. Infect does not do that. Leave PAC strip out of launchd. Use `BUILD_ARM64E=ON` and `-arm64e_preview_abi`.
+Ammonia does not strip PAC. Infect is the launchd payload, and PAC stripping must never run in PID 1 — a PAC fault there panics the kernel. Arm64e apps run natively instead: build with `BUILD_ARM64E=ON` and boot with `-arm64e_preview_abi`.
 
-`fangs_hook.c` still has the rewriter if you ever load it somewhere other than PID 1.
+The old Plugin Playground rewriter (`exe.c` / `fangs_hook.c`, which rewrote arm64e app copies under `/tmp/RuntimeApplications/` when `disablePAC` was set and a spawn hook called `getready_process()`) has been removed. `disablePAC` remains a readable/writable option key for compatibility, but nothing acts on it.

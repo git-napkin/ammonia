@@ -48,7 +48,7 @@ Do not put Security, PAC strip, options watchers, or `dlopen(fridagum.dylib)` in
 
 ## Tweak loading (opener)
 
-`libinfect` is compiled against Ammonia's Gum header/ABI (`gum_interceptor_replace` is interceptor, address, replacement, replacement_data, original). Frida 17.9.11 uses that same prototype; newer Gum main uses a different last argument. `setup_frida.sh` still writes `include/frida-gum.h` from the 17.9.11 SDK — keep infect on the PID-1-proven archive, not that path. CMake prefers `../legacy/ammonia/libinfect/frida-gum.h` and `../legacy/ammonia/libfrida-gum-arm64e-arm64.a`.
+`libinfect` is compiled against Ammonia's Gum header/ABI (`gum_interceptor_replace` is interceptor, address, replacement, replacement_data, original). Frida 17.9.11 uses that same prototype, and current Gum `main` still does too — that ABI has not moved (`gum_module_find_global_export_by_name` is also still current). `setup_frida.sh` still writes `include/frida-gum.h` from the 17.9.11 SDK — keep infect on the PID-1-proven archive regardless, because that build is the one that survived launchd. CMake prefers `../legacy/ammonia/libinfect/frida-gum.h` and `../legacy/ammonia/libfrida-gum-arm64e-arm64.a`.
 
 Node SEA: infect skips adding opener on launchd UI spawns. If a SEA binary still starts with `DYLD_INSERT_LIBRARIES` (inherited from a non-launchd parent), opener’s constructor detects `__NODE_SEA_BLOB`, `unsetenv`s the insert, and returns before gum/tweaks — Node aborts when that env is still set at main.
 
@@ -99,12 +99,12 @@ defaults write /private/var/ammonia/core/current.options enabledTweaks -array-ad
 defaults read /private/var/ammonia/core/current.options
 ```
 
-Keys: `enabledTweaks`, `pauseInjection`, `disablePAC`. `pauseInjection` stops opener from loading tweaks; infect still inserts opener on spawn. `disablePAC` is read/written but unused while infect is the launchd payload (PAC strip lives in unused `exe.c` / fangs).
+Keys: `enabledTweaks`, `pauseInjection`, `disablePAC`. `pauseInjection` stops opener from loading tweaks; infect still inserts opener on spawn. `disablePAC` is read/written but unused: infect is the launchd payload and never PAC-strips (the old rewriter source has been removed — see `docs/pac_stripping.md`).
 
 ## Tests
 
 `sh ./testing.sh` after install. During the run the testing tweak writes `~/ammonia_test_results.txt`; the script prints it, then the EXIT trap deletes it. CMake: `test_envbuf`, `test_tweak_utils`, `test_macho_sea` (`ctest` in `Build/`).
 
-## Leftover source
+## Module notes
 
-`syphon/fangs_hook.c`, `fangs_hook_lite.c`, `launchd_probe.c` are not built. PAC strip in `exe.c` is unused while infect is the launchd payload. Node SEA detection is `syphon/macho_sea.c` (infect skip-inject + opener constructor unsetenv + fangs source + tests). The GUI is `gui/` (SwiftUI SPM), bundled as `configurator.app` → `/Applications/Ammonia.app`.
+`syphon/macho_sea.c` is the one non-obvious multi-use module: Node SEA detection feeds infect's skip-inject path, opener's constructor `unsetenv`, and its own tests. The old unused playground code (`exe.c` PAC rewriter, `bundle_copy.c`, `fangs_hook.c`/`fangs_hook_lite.c`, `launchd_probe.c`, `pac_utils.c`, `log.h`) has been removed. The GUI is `gui/` (SwiftUI SPM), bundled as `configurator.app` → `/Applications/Ammonia.app`.
