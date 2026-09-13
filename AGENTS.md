@@ -32,33 +32,34 @@ CMake: `BUILD_ARM64E` (default ON) applies to `ammonia` / `libinject` / `libopen
 ammonia (LaunchDaemon, one-shot, KeepAlive SuccessfulExit=false)
   → trampoline: pthread_create_from_mach_thread → helper dlopen → pthread_join;
     SENTINEL in x0 only after a non-NULL handle, plus dyld image-list check
-    → gum_init_embedded + gum_module_find_global_export_by_name("posix_spawn")
-    → UI children / xpcproxy get DYLD_INSERT_LIBRARIES=libopener.dylib
+    → gum_init_embedded + gum_module_find_global_export_by_name("posix_spawn"|"posix_spawnp")
+    → UI children get DYLD_INSERT_LIBRARIES=libopener.dylib
+    → xpcproxy gets DYLD_INSERT_LIBRARIES=libinject.dylib (propagate hook)
       → opener: enabledTweaks from current.options, dlopen tweaks/
 
 ammonia --scan
-  → late dlopen(libopener) into already-running AppKit processes
-    (skips Dock, WallpaperAgent, WindowServer, …)
+  → same trampoline late-injects libopener into already-running AppKit processes
+    (skips Dock, WallpaperAgent, WindowServer, loginwindow, …)
 ```
 
-Do not put Security, PAC strip, options watchers, or `dlopen(fridagum.dylib)` into PID 1. That is what playground fangs/lite did; it SIGSEGVs launchd on Darwin 27. Infect logs to `infect.log` like stock Ammonia. `ammonia.blacklist` at the support root skips opener insert (Dock, WallpaperAgent, …). `loginwindow` is spawn-injected when infect is already in launchd; ammonia also late-loads opener into a running loginwindow because that process often wins the boot race. TransparentPictures may load there but must not install global `NSCachedImageRep` / `wantsLayer` hooks — that panicked WindowServer at the boot login screen. The lock-screen photo is `LUI2TrackedImageView` (force an opaque white plate; do not map it to clearColor).
+Do not put Security, PAC strip, options watchers, or `dlopen(fridagum.dylib)` into PID 1. That is what playground fangs/lite did; it SIGSEGVs launchd on Darwin 27. Infect logs to `infect.log` like stock Ammonia. `ammonia.blacklist` at the support root skips opener insert (Dock, WallpaperAgent, WindowServer, …). `loginwindow` is spawn-injected when infect is already in launchd; the no-arg daemon path also late-loads opener into a running loginwindow because that process often wins the boot race (`--scan` does not target loginwindow). Flag file `ammonia.disable-xpcproxy` at the support root disables the xpcproxy `libinject` insert.
 
 **Safe mode:** `kern.safeboot` or boot-args token `-x`. `ammonia` exits 0 without injecting (KeepAlive will not retry). Infect’s constructor does not hook posix_spawn. Opener does not load gum or tweaks.
 
 ## Tweak loading (opener)
 
-`libinfect` is compiled against Ammonia's Gum header/ABI (`gum_interceptor_replace` is interceptor, address, replacement, replacement_data, original). Current Frida 17.9.11 docs list a different last argument. `setup_frida.sh` writes `include/frida-gum.h` for that newer SDK; do not point infect at it. CMake prefers `../legacy/ammonia/libinfect/frida-gum.h` and `../legacy/ammonia/libfrida-gum-arm64e-arm64.a`.
+`libinfect` is compiled against Ammonia's Gum header/ABI (`gum_interceptor_replace` is interceptor, address, replacement, replacement_data, original). Frida 17.9.11 uses that same prototype; newer Gum main uses a different last argument. `setup_frida.sh` still writes `include/frida-gum.h` from the 17.9.11 SDK — keep infect on the PID-1-proven archive, not that path. CMake prefers `../legacy/ammonia/libinfect/frida-gum.h` and `../legacy/ammonia/libfrida-gum-arm64e-arm64.a`.
 
 Node SEA: infect skips adding opener on launchd UI spawns. If a SEA binary still starts with `DYLD_INSERT_LIBRARIES` (inherited from a non-launchd parent), opener’s constructor detects `__NODE_SEA_BLOB`, `unsetenv`s the insert, and returns before gum/tweaks — Node aborts when that env is still set at main.
 
-Tweaks live under `/private/var/ammonia/core/tweaks/` so sandboxed apps can `dlopen` them. There is no `/opt/pluginplayground` tree.
+Tweaks live under `/private/var/ammonia/core/tweaks/` so sandboxed apps can `dlopen` them. There is no `/opt/pluginplayground` tree. Opener rejects tweaks that are not root-owned or that are group/world-writable. Optional `LoadFunction(void *interceptor)` runs after `dlopen` when present. SIGUSR1 and a vnode watch on `current.options` reload tweaks in already-injected processes.
 
-`frameworkDependencies` in a tweak `.options` sidecar is an AppKit-style gate (TransparentPictures uses it; SquareCorners does not). It is satisfied if **either**:
+`frameworkDependencies` in a tweak `.options` sidecar is an optional AppKit-style gate (SquareCorners omits it). It is satisfied if **either**:
 
 - the host executable’s Mach-O load commands name that framework (header + `sizeofcmds` only — large binaries like Warp are not mmap’d whole), or
 - the framework is already mapped in the process (`_dyld_get_image_name`). Electron stubs do not link AppKit; it arrives via Electron Framework after opener’s constructor, so opener rescans on the main queue.
 
-If the sidecar is unreadable, the framework gate is skipped (`check_dylib_options` returns true).
+If the sidecar is unreadable, the framework gate is skipped (`check_dylib_options` returns true). Sidecar `.whitelist` / `.blacklist` and `.options` `blacklistedApps` also filter hosts (whitelist, if present even empty, is exclusive).
 
 ## Clean reinstall (drop Playground)
 
@@ -68,7 +69,7 @@ sudo sh ./uninstall.sh
 sh ./install.sh
 sudo installer -pkg Ammonia-1.0.0.pkg -target /
 # reboot again — every UI spawn gets opener from infect
-cd ../tweaks && sudo make TWEAK=SquareCorners install && sudo make TWEAK=TransparentPictures install
+cd ../tweaks && sudo make TWEAK=SquareCorners install
 ```
 
 `uninstall.sh` boots out both daemons, deletes `/opt/pluginplayground`, both apps, `/private/var/ammonia`, and the old grant plist. Do not install the pkg until after that first reboot, or postinstall will inject into the still-dirty launchd.
@@ -84,8 +85,10 @@ If launchd panics, delete `/Library/LaunchDaemons/com.ammonia.inject.plist` from
   libopener.dylib
   fridagum.dylib
   current.options
+  ammonia.blacklist
   include/playground_tweak.h
   share/com.ammonia.inject.plist
+  share/ammonia.blacklist
   tweaks/
 /Library/LaunchDaemons/com.ammonia.inject.plist
 /Applications/Ammonia.app
@@ -96,11 +99,11 @@ defaults write /private/var/ammonia/core/current.options enabledTweaks -array-ad
 defaults read /private/var/ammonia/core/current.options
 ```
 
-Keys: `disablePAC`, `pauseInjection`, `enabledTweaks`. `pauseInjection` stops opener from loading tweaks; infect still inserts opener on spawn.
+Keys: `enabledTweaks`, `pauseInjection`, `disablePAC`. `pauseInjection` stops opener from loading tweaks; infect still inserts opener on spawn. `disablePAC` is read/written but unused while infect is the launchd payload (PAC strip lives in unused `exe.c` / fangs).
 
 ## Tests
 
-`sh ./testing.sh` after install. Results: `~/ammonia_test_results.txt`. CMake: `test_envbuf`, `test_tweak_utils`, `test_macho_sea` (`ctest` in `Build/`).
+`sh ./testing.sh` after install. During the run the testing tweak writes `~/ammonia_test_results.txt`; the script prints it, then the EXIT trap deletes it. CMake: `test_envbuf`, `test_tweak_utils`, `test_macho_sea` (`ctest` in `Build/`).
 
 ## Leftover source
 
